@@ -1,8 +1,4 @@
 module.exports = function override(config, env) {
-  config.module.rules.push({
-    test: /\.worker\.js$/,
-    use: { loader: "worker-loader" }
-  });
-
+  // 已移除 worker-loader：Yixin 是唯一引擎，不再需要 JS AI worker
   return config;
 };

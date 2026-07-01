@@ -1,42 +1,106 @@
+/* 全局基础：固定视口，禁止页面滚动 */
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+               'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  color: var(--app-text, #222);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--app-bg, #f4f6f8);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* ===== 顶层布局 ===== */
 .App {
-  text-align: center;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* 棋盘区域：剩余空间全部给棋盘，内容居中 */
+.board-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
   align-items: center;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  padding: 8px 10px;
+  position: relative;
 }
 
-.App-link {
-  color: #61dafb;
+/* 右侧边栏：固定宽度，所有控制/设置都在这里 */
+.side-panel {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: var(--side-bg, #fff);
+  border-left: 1px solid var(--side-border, rgba(0, 0, 0, 0.06));
+  overflow-y: auto;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.03);
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
+/* 侧边栏里的卡片块 */
+.panel-card {
+  background: var(--card-bg, #fafafa);
+  border: 1px solid var(--card-border, rgba(0, 0, 0, 0.05));
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.panel-card-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #999;
+  margin-bottom: 10px;
+}
+
+/* 响应式：小屏把侧边栏收到下面（仍保证不滚动，改用抽屉还是折叠视情况） */
+@media (max-width: 800px) {
+  .side-panel {
+    width: 260px;
   }
-  to {
-    transform: rotate(360deg);
-  }
 }
 
-.button {
-  margin: 0 10px;
+@media (max-width: 680px) {
+  .app-body {
+    flex-direction: column;
+  }
+  .side-panel {
+    width: 100%;
+    height: auto;
+    max-height: 38vh;
+    border-left: none;
+    border-top: 1px solid var(--side-border, rgba(0, 0, 0, 0.06));
+    flex-direction: row;
+    flex-wrap: wrap;
+    overflow-y: auto;
+  }
+  .panel-card {
+    flex: 1;
+    min-width: 160px;
+  }
 }

@@ -1,31 +1,29 @@
 {
   "name": "gobang-v3",
-  "version": "3.0.0-beta.1",
+  "version": "3.0.0",
+  "description": "AI 五子棋桌面版（React + Electron + Rapfi 引擎）",
+  "author": "AI 五子棋",
   "private": true,
+  "homepage": "./",
+  "main": "electron-main.js",
   "dependencies": {
     "@reduxjs/toolkit": "^1.9.5",
-    "@testing-library/jest-dom": "^5.17.0",
-    "@testing-library/react": "^13.4.0",
-    "@testing-library/user-event": "^13.5.0",
     "antd": "^5.8.3",
-    "axios": "^1.4.0",
-    "lodash": "^4.17.21",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-redux": "^8.1.2",
-    "react-scripts": "5.0.1",
-    "web-vitals": "^2.1.4"
+    "react-scripts": "5.0.1"
   },
   "scripts": {
     "start": "react-app-rewired start",
     "build": "react-app-rewired build",
     "test": "react-app-rewired test",
-    "eject": "react-app-rewired eject"
+    "eject": "react-app-rewired eject",
+    "dist": "npm run build && npx electron-builder --win portable"
   },
   "eslintConfig": {
     "extends": [
-      "react-app",
-      "react-app/jest"
+      "react-app"
     ]
   },
   "browserslist": {
@@ -41,7 +39,48 @@
     ]
   },
   "devDependencies": {
-    "react-app-rewired": "^2.2.1",
-    "worker-loader": "^3.0.8"
+    "electron": "^31.7.7",
+    "electron-builder": "^26.15.3",
+    "react-app-rewired": "^2.2.1"
+  },
+  "build": {
+    "extends": null,
+    "appId": "com.gobang.app",
+    "productName": "AI五子棋",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "build/**/*",
+      "!build/**/*.map",
+      "electron-main.js",
+      "electron-main/**/*",
+      "src/preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "release/rapfi",
+        "to": "rapfi",
+        "filter": [
+          "**/*",
+          "!**/*.7z",
+          "!linux/**"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "resources/rapfi/**/*"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "public/icon.ico",
+      "artifactName": "AI五子棋.exe",
+      "signExecutable": false
+    },
+    "portable": {
+      "artifactName": "AI五子棋.exe"
+    },
+    "compression": "maximum"
   }
 }

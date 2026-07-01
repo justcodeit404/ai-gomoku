@@ -1,6 +1,8 @@
 .DS_Store
 node_modules
 /dist
+/build
+/release
 
 # local env files
 .env.local
@@ -10,6 +12,16 @@ node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+app-*.log
+electron-*.txt
+electron-*.log
+
+# Local codebase memory index
+.codebase-memory/
+
+# Test screenshots and misc
+*.png
+nul
 
 # Editor directories and files
 .idea

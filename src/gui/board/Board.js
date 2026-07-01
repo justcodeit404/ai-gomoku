@@ -1,0 +1,432 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDispatch, useSelector, shallowEqual } from 'react-redux';
+import { Button, Radio, Space } from 'antd';
+import { EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
+import {
+  movePiece, tempMove, applyBoardEdit, fetchHint, clearHint,
+} from '../../store/gameSlice';
+import { isForbidden, buildWalledBoard, coordinate2Position, checkFiveAt } from '../../game';
+import { playMoveSound, playWinSound, setSoundEnabled } from '../audio/sounds';
+import './board.css';
+import { STATUS } from '../../status';
+
+const STAR_POINTS_15 = [[3, 3], [3, 11], [11, 3], [11, 11], [7, 7]];
+const PADDING_PX = 44;
+
+function usePointStyles(size) {
+  return useMemo(() => {
+    const styles = [];
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        styles.push({
+          left: `calc(${PADDING_PX}px + ${j} * (100% - ${PADDING_PX * 2}px) / ${size - 1})`,
+          top: `calc(${PADDING_PX}px + ${i} * (100% - ${PADDING_PX * 2}px) / ${size - 1})`,
+        });
+      }
+    }
+    return styles;
+  }, [size]);
+}
+
+const Intersection = React.memo(function Intersection({ i, j, cell, style, isLast, number }) {
+  return (
+    <div className="intersection" data-i={i} data-j={j} style={style}>
+      {cell !== 0 && (
+        <div className={cell === 1 ? 'piece black' : 'piece white'}>
+          {number === 0 ? '' : number}
+        </div>
+      )}
+      {isLast && <div className="last-move" />}
+    </div>
+  );
+});
+
+// 把 history 翻回 board 矩阵
+function boardFromHistory(history, size) {
+  const b = Array.from({ length: size }, () => Array(size).fill(0));
+  for (const h of history) b[h.i][h.j] = h.role;
+  return b;
+}
+
+const Board = () => {
+  const dispatch = useDispatch();
+  const sel = useSelector((s) => ({
+    board: s.game.board,
+    currentPlayer: s.game.currentPlayer,
+    history: s.game.history,
+    winner: s.game.winner,
+    aiFirst: s.game.aiFirst,
+    status: s.game.status,
+    loading: s.game.loading,
+    forbiddenEnabled: s.game.forbiddenEnabled,
+    showMoveNumbers: s.game.showMoveNumbers,
+    soundEnabled: s.game.soundEnabled,
+    showHint: s.game.showHint,
+    hintMove: s.game.hintMove,
+    size: s.game.size,
+    winningLine: s.game.winningLine,
+  }), shallowEqual);
+
+  const { board, currentPlayer, history, winner, aiFirst, status, loading, forbiddenEnabled, showMoveNumbers, soundEnabled, showHint, hintMove, size, winningLine } = sel;
+
+  const [hover, setHover] = useState(null);
+  const [forbiddenMsg, setForbiddenMsg] = useState(null);
+  const forbiddenMsgTimerRef = useRef(null);
+
+  // 摆棋模式状态
+  const [editing, setEditing] = useState(false);
+  const [editBoard, setEditBoard] = useState(null);
+  const [editColor, setEditColor] = useState(1);
+
+  // 同步音效开关
+  useEffect(() => {
+    setSoundEnabled(soundEnabled);
+  }, [soundEnabled]);
+
+  // 落子音效：history 增加时播放
+  const prevHistoryLenRef = useRef(history.length);
+  useEffect(() => {
+    if (history.length > prevHistoryLenRef.current) {
+      playMoveSound();
+    }
+    prevHistoryLenRef.current = history.length;
+  }, [history.length]);
+
+  // 胜利音效
+  const prevWinnerRef = useRef(null);
+  useEffect(() => {
+    if (winner !== null && prevWinnerRef.current === null) {
+      playWinSound();
+    }
+    prevWinnerRef.current = winner;
+  }, [winner]);
+
+  // AI 提示：开启且轮到人类时请求
+  const humanRole = aiFirst ? -1 : 1;
+  const hintMoveRef = useRef(hintMove);
+  hintMoveRef.current = hintMove;
+  useEffect(() => {
+    if (!showHint || status !== STATUS.GAMING || loading || currentPlayer !== humanRole || winner !== null) {
+      if (hintMoveRef.current) dispatch(clearHint());
+      return;
+    }
+    const id = window.setTimeout(() => {
+      dispatch(fetchHint());
+    }, 400);
+    return () => window.clearTimeout(id);
+  }, [showHint, status, loading, currentPlayer, humanRole, winner, history.length, dispatch]);
+
+  useEffect(() => () => {
+    if (forbiddenMsgTimerRef.current) window.clearTimeout(forbiddenMsgTimerRef.current);
+  }, []);
+
+  const lastMove = useMemo(() => history[history.length - 1], [history]);
+  const stars = useMemo(() => (size === 15 ? STAR_POINTS_15 : []), [size]);
+  const pointStyles = usePointStyles(size);
+  const isGaming = status === STATUS.GAMING;
+
+  // 编辑模式开关：进入时把当前局面拷到本地；退出/完成时清空
+  const enterEdit = useCallback(() => {
+    const copy = boardFromHistory(history, size);
+    setEditBoard(copy);
+    setEditColor(1);
+    setEditing(true);
+  }, [history, size]);
+
+  const cancelEdit = useCallback(() => {
+    setEditing(false);
+    setEditBoard(null);
+  }, []);
+
+  const commitEdit = useCallback(() => {
+    // 摆棋完成：构造 history 并 dispatch applyBoardEdit
+    const hist = [];
+    if (editBoard) {
+      for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) {
+          if (editBoard[i][j] !== 0) hist.push({ i, j, role: editBoard[i][j], elapsedMs: 0 });
+        }
+      }
+    }
+    // 颜色顺序不强制，但 currentPlayer 按"下一步该谁"推导
+    const nextPlayer = hist.length % 2 === 0 ? 1 : -1;
+    dispatch(applyBoardEdit({
+      board: editBoard || Array.from({ length: size }, () => Array(size).fill(0)),
+      history: hist,
+      currentPlayer: nextPlayer,
+    }));
+    setEditing(false);
+    setEditBoard(null);
+  }, [dispatch, editBoard, size]);
+
+  // 编辑模式下：点击格子切换颜色
+  const onEditCellClick = useCallback((i, j) => {
+    setEditBoard((prev) => {
+      if (!prev) return prev;
+      const next = prev.map((row) => row.slice());
+      if (next[i][j] === editColor) {
+        next[i][j] = 0;
+      } else {
+        next[i][j] = editColor;
+      }
+      return next;
+    });
+  }, [editColor]);
+
+  const onIntersectionClick = useCallback((i, j) => {
+    if (editing) {
+      onEditCellClick(i, j);
+      return;
+    }
+    if (loading || !isGaming) return;
+    if (board[i][j] !== 0) return;
+    if (forbiddenEnabled && currentPlayer === 1) {
+      const evalBoard = buildWalledBoard(board, size);
+      if (isForbidden(evalBoard, i, j, size)) {
+        setForbiddenMsg({ i, j });
+        window.clearTimeout(forbiddenMsgTimerRef.current);
+        forbiddenMsgTimerRef.current = window.setTimeout(() => setForbiddenMsg(null), 1500);
+        return;
+      }
+    }
+    dispatch(tempMove([i, j]));
+    const nextBoard = board.map((row) => row.slice());
+    nextBoard[i][j] = currentPlayer;
+    if (checkFiveAt(nextBoard, i, j, currentPlayer)) {
+      return;
+    }
+    dispatch(movePiece({ position: [i, j] }));
+  }, [editing, onEditCellClick, loading, isGaming, board, forbiddenEnabled, currentPlayer, size, dispatch]);
+
+  const boardRef = useRef(null);
+  const rectRef = useRef(null);
+
+  const findNearest = useCallback((clientX, clientY) => {
+    const el = boardRef.current;
+    if (!el) return null;
+    const rect = rectRef.current || el.getBoundingClientRect();
+    const stepX = (rect.width - 2 * PADDING_PX) / (size - 1);
+    const stepY = (rect.height - 2 * PADDING_PX) / (size - 1);
+    const lx = clientX - rect.left - PADDING_PX;
+    const ly = clientY - rect.top - PADDING_PX;
+    if (lx < -stepX / 2 || lx > (size - 1) * stepX + stepX / 2) return null;
+    if (ly < -stepY / 2 || ly > (size - 1) * stepY + stepY / 2) return null;
+    const j = Math.round(lx / stepX);
+    const i = Math.round(ly / stepY);
+    if (i < 0 || i >= size || j < 0 || j >= size) return null;
+    return [i, j];
+  }, [size]);
+
+  const onBoardClick = useCallback((e) => {
+    const pt = findNearest(e.clientX, e.clientY);
+    if (!pt) return;
+    onIntersectionClick(pt[0], pt[1]);
+  }, [onIntersectionClick, findNearest]);
+
+  useEffect(() => {
+    if (!boardRef.current) return;
+    const update = () => {
+      rectRef.current = boardRef.current.getBoundingClientRect();
+    };
+    update();
+    let ro;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(update);
+      ro.observe(boardRef.current);
+    }
+    window.addEventListener('resize', update);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, []);
+
+  const onBoardMouseMove = useCallback((e) => {
+    const pt = findNearest(e.clientX, e.clientY);
+    if (!pt || loading || (!editing && !isGaming) || (!editing && board[pt[0]][pt[1]] !== 0)) {
+      if (hover !== null) setHover(null);
+      return;
+    }
+    if (hover && hover[0] === pt[0] && hover[1] === pt[1]) return;
+    setHover(pt);
+  }, [findNearest, board, isGaming, loading, hover, editing]);
+
+  const onBoardMouseLeave = useCallback(() => setHover(null), []);
+
+  const positionIndexMap = useMemo(() => {
+    if (!showMoveNumbers) return null;
+    const map = {};
+    const srcHist = editing && editBoard ? editBoard : history;
+    const indexFromBoard = (m) => {
+      // 摆棋模式下没有"步数序号"，按自然排序给个编号
+      const flat = [];
+      for (let i = 0; i < size; i++)
+        for (let j = 0; j < size; j++) if (srcHist[i] && srcHist[i][j] !== 0) flat.push([i, j]);
+      flat.sort((a, b) => (a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1]));
+      return flat.findIndex((x) => x[0] === m[0] && x[1] === m[1]) + 1;
+    };
+    if (editing && editBoard) {
+      for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) {
+          if (editBoard[i][j] !== 0) {
+            map[coordinate2Position(i, j, size)] = indexFromBoard([i, j]);
+          }
+        }
+      }
+    } else {
+      for (let x = 0; x < history.length; x++) {
+        map[coordinate2Position(history[x].i, history[x].j, size)] = x + 1;
+      }
+    }
+    return map;
+  }, [showMoveNumbers, history, size, editing, editBoard]);
+
+  const coordLabels = useMemo(() => {
+    const cols = [];
+    const rows = [];
+    for (let j = 0; j < size; j++) {
+      cols.push({ j, left: pointStyles[j].left, char: String.fromCharCode(65 + j) });
+    }
+    for (let i = 0; i < size; i++) {
+      rows.push({ i, top: pointStyles[i * size].top, num: i + 1 });
+    }
+    return { cols, rows };
+  }, [size, pointStyles]);
+
+  const forbiddenOverlay = useMemo(() => {
+    if (!forbiddenMsg) return null;
+    return (
+      <div key="forbidden" className="forbidden-mark" style={pointStyles[forbiddenMsg.i * size + forbiddenMsg.j]}>
+        禁
+      </div>
+    );
+  }, [forbiddenMsg, size, pointStyles]);
+
+  // 当前显示的棋盘与 history
+  const displayBoard = editing && editBoard ? editBoard : board;
+  const displayLastMove = editing ? null : lastMove;
+
+  return (
+    <div
+      ref={boardRef}
+      className={`board ${editing ? 'editing' : ''}`}
+      style={{ '--size': size }}
+      onClick={onBoardClick}
+      onMouseMove={onBoardMouseMove}
+      onMouseLeave={onBoardMouseLeave}
+    >
+      <div className="board-grid" />
+
+      {winningLine && !editing && (
+        <svg className="winning-line-svg" viewBox={`0 0 ${size - 1} ${size - 1}`} preserveAspectRatio="none">
+          <line
+            x1={winningLine[0][1]}
+            y1={winningLine[0][0]}
+            x2={winningLine[winningLine.length - 1][1]}
+            y2={winningLine[winningLine.length - 1][0]}
+            stroke="#e74c3c"
+            strokeWidth="0.12"
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
+
+      {coordLabels.cols.map(({ j, left, char }) => (
+        <React.Fragment key={`coord-col-${j}`}>
+          <div className="coord-label coord-top" style={{ left }}>{char}</div>
+          <div className="coord-label coord-bottom" style={{ left }}>{char}</div>
+        </React.Fragment>
+      ))}
+      {coordLabels.rows.map(({ i, top, num }) => (
+        <React.Fragment key={`coord-row-${i}`}>
+          <div className="coord-label coord-left" style={{ top }}>{num}</div>
+          <div className="coord-label coord-right" style={{ top }}>{num}</div>
+        </React.Fragment>
+      ))}
+
+      {stars.map(([i, j]) => (
+        <div key={`star-${i}-${j}`} className="star-point" style={pointStyles[i * size + j]} />
+      ))}
+
+      {forbiddenOverlay}
+
+      {displayBoard.map((row, i) =>
+        row.map((cell, j) => {
+          const isLast = displayLastMove && displayLastMove.i === i && displayLastMove.j === j;
+          const number = positionIndexMap ? (positionIndexMap[coordinate2Position(i, j, size)] || 0) : 0;
+          return (
+            <Intersection
+              key={`${i}-${j}`}
+              i={i}
+              j={j}
+              cell={cell}
+              style={pointStyles[i * size + j]}
+              isLast={isLast}
+              number={number}
+            />
+          );
+        })
+      )}
+
+      {/* 摆棋模式：上方工具栏 */}
+      {editing && (
+        <div className="edit-toolbar">
+          <Space>
+            <span style={{ color: '#fff' }}>摆棋中：</span>
+            <Radio.Group value={editColor} onChange={(e) => setEditColor(e.target.value)} buttonStyle="solid" size="small">
+              <Radio.Button value={1}>黑</Radio.Button>
+              <Radio.Button value={-1}>白</Radio.Button>
+            </Radio.Group>
+            <Button size="small" icon={<DeleteOutlined />} onClick={() => setEditBoard(Array.from({ length: size }, () => Array(size).fill(0)))}>
+              清空
+            </Button>
+            <Button size="small" type="primary" icon={<CheckOutlined />} onClick={commitEdit}>
+              完成
+            </Button>
+            <Button size="small" icon={<CloseOutlined />} onClick={cancelEdit}>
+              取消
+            </Button>
+          </Space>
+          <div className="edit-hint">点击空格放置当前色，点击同色删除</div>
+        </div>
+      )}
+
+      {/* 摆棋模式下没有 hover preview，因为不需要 */}
+      {!editing && hover && isGaming && !loading && board[hover[0]][hover[1]] === 0 && (
+        <div
+          className={currentPlayer === 1 ? 'piece black preview' : 'piece white preview'}
+          style={pointStyles[hover[0] * size + hover[1]]}
+        />
+      )}
+
+      {!editing && showHint && hintMove && isGaming && !loading && board[hintMove.i][hintMove.j] === 0 && (
+        <div
+          className={`piece ${humanRole === 1 ? 'black' : 'white'} hint`}
+          style={pointStyles[hintMove.i * size + hintMove.j]}
+          title="AI 提示"
+        />
+      )}
+
+      {loading && (
+        <div className="loading-overlay">
+          <div className="loading-spinner" />
+          <div className="loading-text">AI 思考中…</div>
+        </div>
+      )}
+
+      {/* 摆棋模式：不阻塞正常对弈，提示一个入口按钮 */}
+      {!editing && !loading && (
+        <Button
+          className="edit-entry-btn"
+          icon={<EditOutlined />}
+          onClick={enterEdit}
+          size="small"
+        >
+          摆棋
+        </Button>
+      )}
+    </div>
+  );
+};
+
+export default Board;
