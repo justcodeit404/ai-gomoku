@@ -131,6 +131,12 @@ function registerEngineIpc(getMainWindow) {
     }
   }));
 
+  ipcMain.handle('engine:setupBoard', wrap(async (_e, { history, nextPlayer } = {}) => {
+    const b = await ensureBridge();
+    const result = await b.setupBoard(history || [], nextPlayer || 1);
+    return result;
+  }));
+
   ipcMain.handle('history:list', wrap(async () => {
     const records = await readHistory();
     return { records };

@@ -4,7 +4,7 @@ import { STATUS } from '../status';
 import { checkFiveAt, getWinningLine } from '../game';
 
 import {
-  start, end, move, undo, probe, restore, hint,
+  start, end, move, undo, probe, restore, hint, setupBoard,
 } from '../bridge';
 
 export const probeEngine = createAsyncThunk('game/probeEngine', async () => {
@@ -60,16 +60,17 @@ export const fetchHint = createAsyncThunk('game/fetchHint', async (_, { getState
 
 const createEmptyBoard = () => Array.from({ length: board_size }, () => Array(board_size).fill(0));
 
-// 提交摆棋结果：调引擎 restore()，把给定局面装入引擎并进入对局。
-// payload: { board, history, currentPlayer }
-// aiFirst 由 store.aiFirst 决定（用户在 SettingsPanel 设置）。
+// 提交摆棋结果:用 BOARD 命令把最终局面装入引擎,引擎按下一步该谁走决定是否立即回应。
+// aiFirst 由 store.aiFirst 决定。
 export const commitBoardEdit = createAsyncThunk(
   'game/commitBoardEdit',
-  async ({ board, history, currentPlayer }, { getState }) => {
+  async ({ history, currentPlayer }, { getState }) => {
     const { size, aiFirst, timeLimit, forbiddenEnabled } = getState().game;
-    // 摆棋完成后立即让 AI 接手：若轮到 AI 走，引擎需回应一手
-    const triggerAiMove = currentPlayer === (aiFirst ? 1 : -1);
-    const data = await restore(size, aiFirst, history, currentPlayer, timeLimit, forbiddenEnabled, triggerAiMove);
+    // 1. 用 aiFirst=false 调 start 配引擎参数(避免 aiFirst=true 时引擎自动走第一手 BEGIN 污染局面)
+    //    aiFirst 状态在 setupBoard 走完后由 store.currentPlayer 决定,引擎只关心 nextPlayer
+    await start(size, /* aiFirst */ false, /* depth */ 8, timeLimit, forbiddenEnabled);
+    // 2. 用 setupBoard 把 history 装入引擎,引擎按 nextPlayer 决定是否出子
+    const data = await setupBoard(size, history, currentPlayer);
     return data;
   },
 );

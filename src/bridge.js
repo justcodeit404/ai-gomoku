@@ -185,3 +185,28 @@ export const hint = async (board_size, history, forbiddenEnabled) => {
   }
   return engineToApp(reply.x, reply.y);
 };
+
+// 摆棋接管:用 BOARD 命令把当前局面装入主进程引擎,引擎按当前玩家出子。
+// history: app 格式 [{i, j, role:1|-1}],currentPlayer: 1|-1(下一步该谁走)
+// 返回: { aiMove: {i, j, role} | null, boardSize: number }
+export const setupBoard = async (board_size, history, currentPlayer) => {
+  const engineAPI = api();
+  if (!engineAPI) {
+    throw new Error('Rapfi engine API not available');
+  }
+  const engineHistory = (history || []).map((h) => ({
+    x: h.j,
+    y: h.i,
+    role: appRoleToEng(h.role),
+  }));
+  // nextPlayer 用 app role 转 engine role:app 1=黑=engine 1,app -1=白=engine 2
+  const nextPlayerEngine = appRoleToEng(currentPlayer);
+  const r = await engineAPI.setupBoard(engineHistory, nextPlayerEngine);
+  if (r?.aiMove) {
+    return {
+      aiMove: { i: r.aiMove.y, j: r.aiMove.x, role: -1 },
+      boardSize: board_size,
+    };
+  }
+  return { aiMove: null, boardSize: board_size };
+};

@@ -393,7 +393,7 @@ const Board = () => {
         </React.Fragment>
       ))}
 
-      {stars.map(([i, j]) => (
+      {!editing && stars.map(([i, j]) => (
         <div key={`star-${i}-${j}`} className="star-point" style={pointStyles[i * size + j]} />
       ))}
 
@@ -456,7 +456,7 @@ const Board = () => {
         />
       )}
 
-      {loading && (
+      {!editing && loading && (
         <div className="loading-overlay">
           <div className="loading-spinner" />
           <div className="loading-text">AI 思考中…</div>

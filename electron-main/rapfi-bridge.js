@@ -199,6 +199,37 @@ class RapfiBridge {
     return { x: rx, y: ry };
   }
 
+  // 摆棋接管：把给定 history 装入引擎,返回 nextMove 引擎应手(若 nextPlayer 是 AI)。
+  // 流程:发 BOARD + DONE 设置局面,发 yxstop 防止引擎自动出子,再根据 nextPlayer 决定 TURN。
+  // 关键:此方法接管当前主进程引擎,要求调用方先确保 start() 已配好 size/rule/time。
+  // history: [{x, y, role:1|2}...] 已装入棋盘的全部历史子(可能不是真实时序,因为是用户摆的)
+  // nextPlayer: 1 或 2,1 表示下一步让黑走(本进程不响应),2 表示下一步让白走(本进程发 TURN 让引擎出子)
+  // 返回: { aiMove: {x, y, role} | null }   aiMove 为 null 表示下一步不归引擎走
+  async setupBoard(history, nextPlayer) {
+    if (!this.ready()) throw new Error('engine not ready');
+    const lines = ['BOARD'];
+    for (const m of history) {
+      const role = Number(m.role);
+      if (role === 1 || role === 2) {
+        lines.push(`${m.x},${m.y},${role}`);
+      }
+    }
+    lines.push('DONE');
+    await this._sendAndExpect(lines.join('\n'), /^OK$|^YXDONE$/, { timeoutMs: 5000 });
+    this.history = history.map((h) => ({ x: h.x, y: h.y, role: Number(h.role) }));
+    this.cachedForbid = null;
+
+    // 引擎内部棋盘已就位。下一步若归引擎走(白方=2),发 TURN 让引擎出子
+    if (nextPlayer === 2) {
+      this._sendLine(`INFO time_left ${Math.max(0, this.timeLeftMs | 0)}`);
+      const reply = await this._sendAndExpect('TURN', /^\d+,\d+$/, { timeoutMs: this._stepTimeout() });
+      const [rx, ry] = reply.split(',').map(Number);
+      this.history.push({ x: rx, y: ry, role: 2 });
+      return { aiMove: { x: rx, y: ry, role: -1 } };
+    }
+    return { aiMove: null };
+  }
+
   async undo(steps = 1, uiHistory) {
     // UI 一次悔棋撤销 human + AI 两手；引擎 history 与 UI history 一一对应，
     // 因此直接按 UI 步数截取（不再乘以 2）。

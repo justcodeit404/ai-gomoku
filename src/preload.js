@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('engineAPI', {
   stop: () => invoke('engine:stop'),
   forbid: () => invoke('engine:forbid'),
   hint: (opts, history) => invoke('engine:hint', { opts, history }),
+  setupBoard: (history, nextPlayer) => invoke('engine:setupBoard', { history, nextPlayer }),
   end: () => invoke('engine:end'),
 
   // 事件订阅（crash / forbid / message），返回取消订阅函数
