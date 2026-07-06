@@ -87,12 +87,12 @@ function HistoryPanel() {
             >
               <List.Item.Meta
                 title={
-                  <span style={{ fontSize: 12 }}>
+                  <span className="history-item-meta">
                     {formatTime(item.savedAt)} · {item.size || 15}路 · {item.history?.length || 0}步
                   </span>
                 }
                 description={
-                  <span style={{ fontSize: 11, color: '#888' }}>
+                  <span className="history-item-result">
                     {item.winner === 1 ? '黑胜' : item.winner === -1 ? '白胜' : '未分胜负'}
                   </span>
                 }

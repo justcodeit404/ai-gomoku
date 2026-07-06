@@ -14,7 +14,7 @@ function HeaderBar() {
       <div className="app-header-left">
         <div className="app-logo">五</div>
         <div className="app-title">
-          AI 五子棋
+          弈心五子棋
           <span className="app-title-sub">Gomoku</span>
         </div>
       </div>

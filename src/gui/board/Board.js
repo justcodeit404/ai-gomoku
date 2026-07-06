@@ -324,8 +324,8 @@ const Board = () => {
             y1={winningLine[0][0]}
             x2={winningLine[winningLine.length - 1][1]}
             y2={winningLine[winningLine.length - 1][0]}
-            stroke="#e74c3c"
-            strokeWidth="0.12"
+            stroke="var(--cinnabar)"
+            strokeWidth="0.18"
             strokeLinecap="round"
           />
         </svg>

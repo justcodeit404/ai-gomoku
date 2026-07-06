@@ -101,12 +101,14 @@ function GameResultModal() {
   return (
     <div className="result-overlay" onClick={(e) => e.stopPropagation()}>
       <div className="result-card">
-        <div className="result-emoji">{playerWon ? '🏆' : '🤔'}</div>
+        <div className={`result-mark ${playerWon ? 'win' : 'lose'}`}>
+          <span className="result-mark-text">{playerWon ? '胜' : '负'}</span>
+        </div>
         <div className="result-title">
-          {playerWon ? '🎉 你赢了！' : (data.winner === 1 ? '黑方胜' : '白方胜')}
+          {playerWon ? '你赢了' : (data.winner === 1 ? '黑方胜' : '白方胜')}
         </div>
         <div className="result-subtitle">
-          {playerWon ? '漂亮的棋局，再来一局？' : '胜败乃兵家常事，再接再厉'}
+          {playerWon ? '漂亮的棋局，再来一局？' : '胜败常事，再来一局？'}
         </div>
 
         <div className="result-stats">

@@ -1,0 +1,145 @@
+/* ============================================================
+ * Design tokens · 墨韵 (Ink-Rhyme)
+ * 单色板：朱砂红 强调，全局锁死。
+ * 字体：标题 Source Han Serif / 正文 IBM Plex Sans / 计时与坐标 IBM Plex Mono
+ * 形变：6px 按钮、8px 卡片、2px 输入
+ * ============================================================ */
+
+:root {
+  /* ---- 语义色（亮） ---- */
+  --ink-900: #1a1815;        /* 墨黑，正文/线条 */
+  --ink-700: #3a342a;        /* 网格/星位 */
+  --ink-500: #6b6358;        /* 次级文字 */
+  --ink-300: #a8a094;        /* 弱化文字 */
+  --ink-100: #e5dfd2;        /* 浅分割线 */
+
+  --paper-50: #f7f1e3;       /* 宣纸底 */
+  --paper-100: #f4ede1;      /* 卡片底 */
+  --paper-200: #ece4d3;      /* 悬浮 */
+  --paper-300: #d8cdb6;      /* 描边/分割 */
+
+  --cinnabar: #c8553d;       /* 朱砂，唯一强调 */
+  --cinnabar-soft: #d97760;
+  --cinnabar-deep: #9b3a26;
+
+  --jade-50: #6b7a5a;        /* 玉石辅色（白子冷光） */
+  --jade-900: #2a2f25;
+
+  /* ---- 角色别名（与 gameSlice 角色对齐） ---- */
+  --role-black-piece-from: #4a4a4a;
+  --role-black-piece-to:   #0a0a0a;
+  --role-white-piece-from: #ffffff;
+  --role-white-piece-to:   #d0d0d0;
+
+  /* ---- 表面与结构 ---- */
+  --app-bg: var(--paper-50);
+  --app-text: var(--ink-900);
+  --app-text-muted: var(--ink-500);
+  --app-text-subtle: var(--ink-300);
+
+  --header-bg: var(--paper-50);
+  --header-border: var(--ink-100);
+  --header-title: var(--ink-900);
+
+  --side-bg: var(--paper-100);
+  --side-border: var(--ink-100);
+  --card-bg: #fdfaf2;
+  --card-border: var(--ink-100);
+  --card-border-strong: var(--ink-300);
+
+  /* ---- 棋盘 ---- */
+  --board-bg: #e8c896;       /* 暖木板色 */
+  --board-bg-2: #d8b07a;     /* 板纹阴影 */
+  --board-grid: rgba(58, 52, 42, 0.78);
+  --board-coord: rgba(58, 52, 42, 0.72);
+  --board-star: rgba(58, 52, 42, 0.82);
+  --board-loading-bg: rgba(244, 237, 225, 0.62);
+  --board-loading-text: var(--ink-900);
+  --board-loading-spin: rgba(58, 52, 42, 0.16);
+  --board-loading-spin-active: var(--cinnabar);
+  --board-forbidden: var(--cinnabar-deep);
+
+  /* ---- 圆角 ---- */
+  --r-input: 2px;
+  --r-button: 6px;
+  --r-card: 8px;
+  --r-pill: 999px;
+
+  /* ---- 阴影（带色调，非纯黑） ---- */
+  --shadow-1: 0 1px 2px rgba(58, 52, 42, 0.08);
+  --shadow-2: 0 4px 12px rgba(58, 52, 42, 0.10);
+  --shadow-3: 0 14px 36px rgba(58, 52, 42, 0.18), 0 4px 8px rgba(58, 52, 42, 0.08);
+  --shadow-inset-soft: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+
+  /* ---- 计时 ---- */
+  --time-normal: var(--ink-900);
+  --time-warn: #b25a2b;      /* 琥珀 */
+  --time-danger: var(--cinnabar);
+
+  /* ---- 字体 ---- */
+  --font-display: 'Source Han Serif SC', 'Noto Serif SC', 'Songti SC', 'STSong', serif;
+  --font-body: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'PingFang SC',
+               'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ---- 动效 ---- */
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 320ms;
+
+  /* ---- AntD 主题覆盖 ---- */
+  --ant-primary-color: var(--cinnabar);
+  --ant-primary-color-hover: var(--cinnabar-soft);
+  --ant-primary-color-active: var(--cinnabar-deep);
+  --ant-color-link: var(--cinnabar);
+  --ant-color-link-hover: var(--cinnabar-soft);
+  --ant-color-link-active: var(--cinnabar-deep);
+  --ant-border-radius: var(--r-button);
+  --ant-border-radius-base: var(--r-button);
+}
+
+/* ---- 深色主题：保留宣纸变深 + 朱砂不变 ---- */
+.App.theme-dark {
+  --app-bg: #14110d;
+  --app-text: #e8dfc8;
+  --app-text-muted: #9a8f7a;
+  --app-text-subtle: #6e6555;
+
+  --header-bg: #14110d;
+  --header-border: #2a2519;
+  --header-title: #e8dfc8;
+
+  --side-bg: #1a1612;
+  --side-border: #2a2519;
+  --card-bg: #221d16;
+  --card-border: #2f2820;
+
+  --board-bg: #2d2519;
+  --board-bg-2: #1f1810;
+  --board-grid: rgba(232, 220, 190, 0.55);
+  --board-coord: rgba(232, 220, 190, 0.7);
+  --board-star: rgba(232, 220, 190, 0.7);
+  --board-loading-bg: rgba(20, 17, 13, 0.72);
+  --board-loading-text: #e8dfc8;
+  --board-loading-spin: rgba(232, 220, 190, 0.16);
+  --board-loading-spin-active: var(--cinnabar);
+  --board-forbidden: #ff7a5e;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 4px 14px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 16px 40px rgba(0, 0, 0, 0.55), 0 4px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* ---- 木纹主题：与亮色相近但更暖 ---- */
+.App.theme-wood {
+  --app-bg: #efe4cc;
+  --app-text: #2a2218;
+  --app-text-muted: #6b5a44;
+  --app-text-subtle: #9a8a72;
+  --side-bg: #f4e9d1;
+  --card-bg: #fbf3df;
+  --board-bg: #e0b478;
+  --board-bg-2: #c89858;
+}
