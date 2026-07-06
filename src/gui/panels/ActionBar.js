@@ -12,7 +12,7 @@ function ActionBar() {
   const dispatch = useDispatch();
   const {
     status, loading, aiFirst, timeLimit, forbiddenEnabled, size, history, winner,
-    blackTimeMs, whiteTimeMs,
+    blackTimeMs, whiteTimeMs, editing,
   } = useSelector(s => ({
     status: s.game.status,
     loading: s.game.loading,
@@ -24,6 +24,7 @@ function ActionBar() {
     winner: s.game.winner,
     blackTimeMs: s.game.blackTimeMs,
     whiteTimeMs: s.game.whiteTimeMs,
+    editing: s.game.editing,
   }), shallowEqual);
   const historyLen = history.length;
 
@@ -31,9 +32,9 @@ function ActionBar() {
   const [confirmResign, setConfirmResign] = useState(false);
 
   const isGaming = status === STATUS.GAMING;
-  const canUndo = isGaming && historyLen >= 2 && !loading;
-  const canResign = isGaming && !loading;
-  const canStart = status === STATUS.IDLE && !loading;
+  const canUndo = isGaming && historyLen >= 2 && !loading && !editing;
+  const canResign = isGaming && !loading && !editing;
+  const canStart = status === STATUS.IDLE && !loading && !editing;
 
   const onStart = () => dispatch(startGame({
     board_size: size, aiFirst, depth: DEFAULT_DEPTH, timeLimit, forbiddenEnabled,
@@ -71,10 +72,10 @@ function ActionBar() {
           </div>
         )}
         {status !== STATUS.IDLE && (
-          <Button size="large" onClick={() => dispatch(restartGame())}>重新开始</Button>
+          <Button size="large" disabled={editing} onClick={() => dispatch(restartGame())}>重新开始</Button>
         )}
         {historyLen > 0 && (
-          <Button size="large" onClick={onSaveRecord}>保存棋谱</Button>
+          <Button size="large" disabled={editing} onClick={onSaveRecord}>保存棋谱</Button>
         )}
       </div>
 

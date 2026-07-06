@@ -60,6 +60,20 @@ export const fetchHint = createAsyncThunk('game/fetchHint', async (_, { getState
 
 const createEmptyBoard = () => Array.from({ length: board_size }, () => Array(board_size).fill(0));
 
+// 提交摆棋结果：调引擎 restore()，把给定局面装入引擎并进入对局。
+// payload: { board, history, currentPlayer }
+// aiFirst 由 store.aiFirst 决定（用户在 SettingsPanel 设置）。
+export const commitBoardEdit = createAsyncThunk(
+  'game/commitBoardEdit',
+  async ({ board, history, currentPlayer }, { getState }) => {
+    const { size, aiFirst, timeLimit, forbiddenEnabled } = getState().game;
+    // 摆棋完成后立即让 AI 接手：若轮到 AI 走，引擎需回应一手
+    const triggerAiMove = currentPlayer === (aiFirst ? 1 : -1);
+    const data = await restore(size, aiFirst, history, currentPlayer, timeLimit, forbiddenEnabled, triggerAiMove);
+    return data;
+  },
+);
+
 export const initialState = {
   // ---- 对局内（重开时被重置）----
   board: createEmptyBoard(),
@@ -84,6 +98,9 @@ export const initialState = {
   showHint: false,
   theme: 'light',
   debug: false,
+  // 摆棋编辑模式开关：true 时 Board 进入"自由摆放"态。
+  // 进入 store 让 ActionBar/键盘/SettingsPanel 等都能感知并拒绝误操作。
+  editing: false,
   engine: {
     kind: 'unavailable',
     bundled: false,
@@ -104,6 +121,7 @@ function resetMatch(state) {
   state.winningLine = null;
   state.showResultModal = false;
   state.hintMove = null;
+  state.editing = false;
 }
 
 function deductTime(state, role, elapsedMs) {
@@ -217,10 +235,36 @@ export const gameSlice = createSlice({
       state.currentPlayer = p.currentPlayer;
       state.winner = null;
       state.winningLine = null;
+      // 摆棋完成 → 由 commitBoardEdit thunk 接管后设置 GAMING，
+      // 这里只反映"已摆好棋"的中间态；commit 失败时保持 IDLE。
       state.status = STATUS.IDLE;
       state.loading = false;
       state.turnStartedAt = Date.now();
       state.showResultModal = false;
+      state.hintMove = null;
+      // 重置双方用时：摆棋另起一局,旧局残量无意义
+      state.blackTimeMs = MATCH_BUDGET_MS;
+      state.whiteTimeMs = MATCH_BUDGET_MS;
+      // 退出编辑态
+      state.editing = false;
+    },
+    // 摆棋模式开关
+    setEditing: (state, action) => {
+      const next = !!action.payload;
+      state.editing = next;
+      // 进入编辑态时清掉计时与历史显示,避免 TurnIndicator 还在跑旧局倒计时
+      if (next) {
+        state.hintMove = null;
+        state.loading = false;
+      }
+    },
+    // 摆棋过程中同步本地 editBoard 到 store.board,
+    // 让 HeaderBar / 其他只读 store 的组件能即时反映当前摆放状态。
+    syncEditBoard: (state, action) => {
+      const p = action.payload;
+      if (p && Array.isArray(p.board)) {
+        state.board = p.board;
+      }
     },
     resign: (state) => {
       state.winner = -state.currentPlayer;
@@ -266,6 +310,54 @@ export const gameSlice = createSlice({
         state.loading = false;
         state.engine.lastError = action.error?.message || 'engine restore failed';
       })
+      .addCase(commitBoardEdit.pending, (state) => {
+        state.loading = true;
+        state.engine.lastError = null;
+      })
+      .addCase(commitBoardEdit.fulfilled, (state, action) => {
+        const p = action.payload || {};
+        state.board = p.board;
+        state.currentPlayer = p.current_player;
+        state.history = p.history;
+        state.status = STATUS.GAMING;
+        state.turnStartedAt = Date.now();
+        state.hintMove = null;
+        state.editing = false;
+        state.loading = false;
+        if (p.aiMove) {
+          // 引擎已回应一手：直接在 store 应用,无需再 dispatch movePiece
+          const { i, j, role } = p.aiMove;
+          // 复用 commitMove 的逻辑,直接展开
+          let elapsedMs = 0;
+          if (state.turnStartedAt) {
+            elapsedMs = Date.now() - state.turnStartedAt;
+            // deductTime 用上一个 currentPlayer,这里先手动扣一次
+            if (state.currentPlayer === 1) {
+              state.blackTimeMs = Math.max(0, state.blackTimeMs - elapsedMs);
+            } else if (state.currentPlayer === -1) {
+              state.whiteTimeMs = Math.max(0, state.whiteTimeMs - elapsedMs);
+            }
+          }
+          state.board[i][j] = role;
+          state.history.push({ i, j, role, elapsedMs });
+          state.currentPlayer = -role;
+          state.turnStartedAt = Date.now();
+          // 胜局检查
+          const last = state.history[state.history.length - 1];
+          if (last && checkFiveAt(state.board, last.i, last.j, last.role)) {
+            state.winner = last.role;
+            state.status = STATUS.IDLE;
+            state.winningLine = getWinningLine(state.board, last.i, last.j, last.role);
+            state.showResultModal = true;
+          }
+        }
+      })
+      .addCase(commitBoardEdit.rejected, (state, action) => {
+        state.loading = false;
+        state.engine.lastError = action.error?.message || 'board edit commit failed';
+        // 引擎接管失败时,保持编辑态让用户可以重试或取消
+        state.editing = false;
+      })
       .addCase(movePiece.pending, (state) => {
         state.loading = true;
       })
@@ -306,7 +398,7 @@ export const gameSlice = createSlice({
 export const {
   tempMove, setAiFirst, setTimeLimit, setForbidden, setShowMoveNumbers, setSoundEnabled, setShowHint, setTheme, setDebug,
   setEngineError, applyYixinMove, applyYixinUndo, applyBoardEdit,
-  setHintMove, clearHint,
+  setHintMove, clearHint, setEditing, syncEditBoard,
   resign, restartGame, closeResultModal,
 } = gameSlice.actions;
 export default gameSlice.reducer;

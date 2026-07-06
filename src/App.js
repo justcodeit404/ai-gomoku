@@ -34,7 +34,7 @@ function EngineErrorToast() {
 
 function KeyboardShortcuts() {
   const dispatch = useDispatch();
-  const { status, loading, aiFirst, timeLimit, forbiddenEnabled, size, history } = useSelector(s => ({
+  const { status, loading, aiFirst, timeLimit, forbiddenEnabled, size, history, editing } = useSelector(s => ({
     status: s.game.status,
     loading: s.game.loading,
     aiFirst: s.game.aiFirst,
@@ -42,6 +42,7 @@ function KeyboardShortcuts() {
     forbiddenEnabled: s.game.forbiddenEnabled,
     size: s.game.size,
     history: s.game.history,
+    editing: s.game.editing,
   }));
 
   useEffect(() => {
@@ -49,6 +50,9 @@ function KeyboardShortcuts() {
       // 忽略输入框内的快捷键
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+
+      // 摆棋模式下,Ctrl+Z / Space / Enter 都由 Board 内部处理,这里不抢
+      if (editing) return;
 
       // Ctrl/Cmd + Z：悔棋
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
@@ -77,7 +81,7 @@ function KeyboardShortcuts() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [dispatch, status, loading, aiFirst, timeLimit, forbiddenEnabled, size, history]);
+  }, [dispatch, status, loading, aiFirst, timeLimit, forbiddenEnabled, size, history, editing]);
 
   return null;
 }

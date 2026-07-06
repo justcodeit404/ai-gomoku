@@ -4,6 +4,7 @@ import { Button, Radio, Space } from 'antd';
 import { EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import {
   movePiece, tempMove, applyBoardEdit, fetchHint, clearHint,
+  setEditing, syncEditBoard, commitBoardEdit, endGame,
 } from '../../store/gameSlice';
 import { isForbidden, buildWalledBoard, coordinate2Position, checkFiveAt } from '../../game';
 import { playMoveSound, playWinSound, setSoundEnabled } from '../audio/sounds';
@@ -65,16 +66,16 @@ const Board = () => {
     hintMove: s.game.hintMove,
     size: s.game.size,
     winningLine: s.game.winningLine,
+    editing: s.game.editing,
   }), shallowEqual);
 
-  const { board, currentPlayer, history, winner, aiFirst, status, loading, forbiddenEnabled, showMoveNumbers, soundEnabled, showHint, hintMove, size, winningLine } = sel;
+  const { board, currentPlayer, history, winner, aiFirst, status, loading, forbiddenEnabled, showMoveNumbers, soundEnabled, showHint, hintMove, size, winningLine, editing } = sel;
 
   const [hover, setHover] = useState(null);
   const [forbiddenMsg, setForbiddenMsg] = useState(null);
   const forbiddenMsgTimerRef = useRef(null);
 
-  // 摆棋模式状态
-  const [editing, setEditing] = useState(false);
+  // 摆棋模式状态（从 store 读 editing；editBoard/editColor 仍为本地临时态）
   const [editBoard, setEditBoard] = useState(null);
   const [editColor, setEditColor] = useState(1);
 
@@ -127,37 +128,83 @@ const Board = () => {
 
   // 编辑模式开关：进入时把当前局面拷到本地；退出/完成时清空
   const enterEdit = useCallback(() => {
+    // 阻断:GAMING 进行中 + loading 都不允许进入(已通过 entry 按钮条件拦住,这里再保险)
+    if (status === STATUS.GAMING && loading) return;
+    // 阻断:GAMING 中允许进入但需先结束当前对局引擎会话,避免 UI/引擎分叉
+    if (status === STATUS.GAMING) {
+      dispatch(endGame());
+    }
     const copy = boardFromHistory(history, size);
     setEditBoard(copy);
     setEditColor(1);
-    setEditing(true);
-  }, [history, size]);
+    dispatch(setEditing(true));
+    // 同步初始 editBoard 到 store,让 HeaderBar 立即反映
+    dispatch(syncEditBoard({ board: copy }));
+  }, [status, loading, history, size, dispatch]);
 
   const cancelEdit = useCallback(() => {
-    setEditing(false);
+    dispatch(setEditing(false));
     setEditBoard(null);
-  }, []);
+    // 恢复 store.board 为最近一次 commit 或空棋盘
+    dispatch(syncEditBoard({ board: Array.from({ length: size }, () => Array(size).fill(0)) }));
+  }, [dispatch, size]);
 
+  // 摆棋完成：按 editColor 起步、黑/白交替构造 history(非按 (i,j) 扫描),
+  // 这样 engine 端 _replayHistory 的"两步一组"TURN 重放能稳定工作。
   const commitEdit = useCallback(() => {
-    // 摆棋完成：构造 history 并 dispatch applyBoardEdit
+    if (!editBoard) {
+      dispatch(setEditing(false));
+      return;
+    }
     const hist = [];
-    if (editBoard) {
-      for (let i = 0; i < size; i++) {
-        for (let j = 0; j < size; j++) {
-          if (editBoard[i][j] !== 0) hist.push({ i, j, role: editBoard[i][j], elapsedMs: 0 });
-        }
+    // editColor=1 表示"接下来要摆的是黑" → history 末位是白(-1) → currentPlayer=1
+    // 收集所有黑子和白子,按时间序交替,起始角色由 editColor 决定
+    const blacks = [];
+    const whites = [];
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        if (editBoard[i][j] === 1) blacks.push({ i, j });
+        else if (editBoard[i][j] === -1) whites.push({ i, j });
       }
     }
-    // 颜色顺序不强制，但 currentPlayer 按"下一步该谁"推导
-    const nextPlayer = hist.length % 2 === 0 ? 1 : -1;
+    // 按 i+j 自然序构造模拟时序(无真实时间,引擎只关心位置 + 角色)
+    blacks.sort((a, b) => a.i !== b.i ? a.i - b.i : a.j - b.j);
+    whites.sort((a, b) => a.i !== b.i ? a.i - b.i : a.j - b.j);
+    // editColor=1: 黑先 → 先放黑子再放白子,交替直到一边用完
+    // editColor=-1: 白先 → 先放白子再放黑子
+    let bIdx = 0, wIdx = 0;
+    let turnRole = editColor;        // 下一手该摆什么色(随循环交替反转)
+    while (bIdx < blacks.length || wIdx < whites.length) {
+      if (turnRole === 1 && bIdx < blacks.length) {
+        hist.push({ ...blacks[bIdx++], role: 1, elapsedMs: 0 });
+      } else if (turnRole === -1 && wIdx < whites.length) {
+        hist.push({ ...whites[wIdx++], role: -1, elapsedMs: 0 });
+      } else if (turnRole === 1 && wIdx < whites.length) {
+        hist.push({ ...whites[wIdx++], role: -1, elapsedMs: 0 });
+      } else if (turnRole === -1 && bIdx < blacks.length) {
+        hist.push({ ...blacks[bIdx++], role: 1, elapsedMs: 0 });
+      } else {
+        break;
+      }
+      turnRole = -turnRole;
+    }
+    // currentPlayer: hist 末位是 -role 的相反,即下一步该走谁
+    const last = hist[hist.length - 1];
+    const nextPlayer = last ? -last.role : (editColor === 1 ? -1 : 1);
+    // 先把本地 editBoard 提交到 store(用于重置用时/退出编辑态),
+    // 再由 commitBoardEdit thunk 调 engine restore() 完成引擎接管
     dispatch(applyBoardEdit({
-      board: editBoard || Array.from({ length: size }, () => Array(size).fill(0)),
+      board: editBoard,
       history: hist,
       currentPlayer: nextPlayer,
     }));
-    setEditing(false);
+    dispatch(commitBoardEdit({
+      board: editBoard,
+      history: hist,
+      currentPlayer: nextPlayer,
+    }));
     setEditBoard(null);
-  }, [dispatch, editBoard, size]);
+  }, [dispatch, editBoard, size, editColor]);
 
   // 编辑模式下：点击格子切换颜色
   const onEditCellClick = useCallback((i, j) => {
@@ -169,9 +216,11 @@ const Board = () => {
       } else {
         next[i][j] = editColor;
       }
+      // 同步到 store.board 让 HeaderBar 等组件即时反映
+      dispatch(syncEditBoard({ board: next }));
       return next;
     });
-  }, [editColor]);
+  }, [editColor, dispatch]);
 
   const onIntersectionClick = useCallback((i, j) => {
     if (editing) {
