@@ -4,7 +4,7 @@ import { Button, Radio, Space } from 'antd';
 import { EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import {
   movePiece, tempMove, applyBoardEdit, fetchHint, clearHint,
-  setEditing, syncEditBoard, commitBoardEdit, endGame,
+  setEditing, syncEditBoard, commitBoardEdit, endGame, restoreGame,
 } from '../../store/gameSlice';
 import { isForbidden, buildWalledBoard, coordinate2Position, checkFiveAt } from '../../game';
 import { playMoveSound, playWinSound, setSoundEnabled } from '../audio/sounds';
@@ -42,13 +42,6 @@ const Intersection = React.memo(function Intersection({ i, j, cell, style, isLas
   );
 });
 
-// 把 history 翻回 board 矩阵
-function boardFromHistory(history, size) {
-  const b = Array.from({ length: size }, () => Array(size).fill(0));
-  for (const h of history) b[h.i][h.j] = h.role;
-  return b;
-}
-
 const Board = () => {
   const dispatch = useDispatch();
   const sel = useSelector((s) => ({
@@ -78,6 +71,8 @@ const Board = () => {
   // 摆棋模式状态（从 store 读 editing；editBoard/editColor 仍为本地临时态）
   const [editBoard, setEditBoard] = useState(null);
   const [editColor, setEditColor] = useState(1);
+  // 保存进入编辑前的局面，供取消时恢复（含是否曾在对局中，决定恢复后能否继续落子）
+  const preEditRef = useRef(null);
 
   // 同步音效开关
   useEffect(() => {
@@ -127,27 +122,58 @@ const Board = () => {
   const isGaming = status === STATUS.GAMING;
 
   // 编辑模式开关：进入时把当前局面拷到本地；退出/完成时清空
-  const enterEdit = useCallback(() => {
+  // 对局中进入时需 await endGame()：endGame.fulfilled 会走 resetMatch 把
+  // editing 置 false、board/history 清空，若不 await 会与下面的 setEditing(true)
+  // 产生竞态，导致编辑界面闪一下又被打回空白。
+  const enterEdit = useCallback(async () => {
     // 阻断:GAMING 进行中 + loading 都不允许进入(已通过 entry 按钮条件拦住,这里再保险)
     if (status === STATUS.GAMING && loading) return;
+    // 保存当前局面，供取消时恢复；endGame 会清空 history，因此不能依赖它重建 board
+    const snapshotBoard = board.map((row) => row.slice());
+    const snapshotHistory = history.slice();
+    preEditRef.current = {
+      board: snapshotBoard,
+      history: snapshotHistory,
+      wasGaming: status === STATUS.GAMING,
+    };
     // 阻断:GAMING 中允许进入但需先结束当前对局引擎会话,避免 UI/引擎分叉
     if (status === STATUS.GAMING) {
-      dispatch(endGame());
+      await dispatch(endGame()); // 等 resetMatch 跑完，再置 editing=true
     }
-    const copy = boardFromHistory(history, size);
+    // 用快照而非闭包里的 board：await 后 store.board 已被 resetMatch 清空，
+    // 但编辑态必须显示进入前的真实局面。
+    const copy = snapshotBoard.map((row) => row.slice());
     setEditBoard(copy);
     setEditColor(1);
     dispatch(setEditing(true));
     // 同步初始 editBoard 到 store,让 HeaderBar 立即反映
     dispatch(syncEditBoard({ board: copy }));
-  }, [status, loading, history, size, dispatch]);
+  }, [status, loading, board, history, dispatch]);
 
   const cancelEdit = useCallback(() => {
+    const snap = preEditRef.current;
     dispatch(setEditing(false));
     setEditBoard(null);
-    // 恢复 store.board 为最近一次 commit 或空棋盘
-    dispatch(syncEditBoard({ board: Array.from({ length: size }, () => Array(size).fill(0)) }));
-  }, [dispatch, size]);
+    // 空闲态进入的编辑：没有对局可恢复，回到空棋盘
+    if (!snap || !snap.wasGaming || !snap.history || snap.history.length === 0) {
+      dispatch(syncEditBoard({ board: Array.from({ length: size }, () => Array(size).fill(0)) }));
+      preEditRef.current = null;
+      return;
+    }
+    // 对局中进入的编辑：用 restoreGame 重建引擎会话并恢复 board/history/currentPlayer，
+    // 恢复后 status=GAMING 可继续落子（applyBoardEdit 只能画棋盘但不能续局）
+    const restoredHistory = snap.history.slice();
+    const tail = restoredHistory[restoredHistory.length - 1];
+    dispatch(restoreGame({
+      board_size: size,
+      history: restoredHistory,
+      currentPlayer: tail ? -tail.role : 1,
+      timeLimit: 5000,
+      forbiddenEnabled,
+      triggerAiMove: false,
+    }));
+    preEditRef.current = null;
+  }, [dispatch, size, forbiddenEnabled]);
 
   // 摆棋完成：按 editColor 起步、黑/白交替构造 history(非按 (i,j) 扫描),
   // 这样 engine 端 _replayHistory 的"两步一组"TURN 重放能稳定工作。
@@ -156,9 +182,7 @@ const Board = () => {
       dispatch(setEditing(false));
       return;
     }
-    const hist = [];
-    // editColor=1 表示"接下来要摆的是黑" → history 末位是白(-1) → currentPlayer=1
-    // 收集所有黑子和白子,按时间序交替,起始角色由 editColor 决定
+    // 收集所有黑子和白子
     const blacks = [];
     const whites = [];
     for (let i = 0; i < size; i++) {
@@ -167,31 +191,41 @@ const Board = () => {
         else if (editBoard[i][j] === -1) whites.push({ i, j });
       }
     }
-    // 按 i+j 自然序构造模拟时序(无真实时间,引擎只关心位置 + 角色)
-    blacks.sort((a, b) => a.i !== b.i ? a.i - b.i : a.j - b.j);
-    whites.sort((a, b) => a.i !== b.i ? a.i - b.i : a.j - b.j);
-    // editColor=1: 黑先 → 先放黑子再放白子,交替直到一边用完
-    // editColor=-1: 白先 → 先放白子再放黑子
+    // 按自然序排(引擎只关心位置 + 角色,无需真实时间)
+    const byPos = (a, b) => a.i !== b.i ? a.i - b.i : a.j - b.j;
+    blacks.sort(byPos);
+    whites.sort(byPos);
+
+    // 交替合并:editColor=1 -> 黑先;editColor=-1 -> 白先
+    const hist = [];
     let bIdx = 0, wIdx = 0;
-    let turnRole = editColor;        // 下一手该摆什么色(随循环交替反转)
+    let turnRole = editColor;
     while (bIdx < blacks.length || wIdx < whites.length) {
       if (turnRole === 1 && bIdx < blacks.length) {
-        hist.push({ ...blacks[bIdx++], role: 1, elapsedMs: 0 });
+        const p = blacks[bIdx++];
+        hist.push({ i: p.i, j: p.j, role: 1, elapsedMs: 0 });
+        turnRole = -1;
       } else if (turnRole === -1 && wIdx < whites.length) {
-        hist.push({ ...whites[wIdx++], role: -1, elapsedMs: 0 });
-      } else if (turnRole === 1 && wIdx < whites.length) {
-        hist.push({ ...whites[wIdx++], role: -1, elapsedMs: 0 });
-      } else if (turnRole === -1 && bIdx < blacks.length) {
-        hist.push({ ...blacks[bIdx++], role: 1, elapsedMs: 0 });
+        const p = whites[wIdx++];
+        hist.push({ i: p.i, j: p.j, role: -1, elapsedMs: 0 });
+        turnRole = 1;
+      } else if (bIdx < blacks.length) {
+        const p = blacks[bIdx++];
+        hist.push({ i: p.i, j: p.j, role: 1, elapsedMs: 0 });
+        turnRole = -1;
+      } else if (wIdx < whites.length) {
+        const p = whites[wIdx++];
+        hist.push({ i: p.i, j: p.j, role: -1, elapsedMs: 0 });
+        turnRole = 1;
       } else {
         break;
       }
-      turnRole = -turnRole;
     }
-    // currentPlayer: hist 末位是 -role 的相反,即下一步该走谁
-    const last = hist[hist.length - 1];
-    const nextPlayer = last ? -last.role : (editColor === 1 ? -1 : 1);
-    // 先把本地 editBoard 提交到 store(用于重置用时/退出编辑态),
+    let nextPlayer;
+    if (blacks.length === whites.length) nextPlayer = 1;
+    else if (blacks.length === whites.length + 1) nextPlayer = -1;
+    else nextPlayer = editColor;
+    // 把本地 editBoard 提交到 store(用于重置用时/退出编辑态),
     // 再由 commitBoardEdit thunk 调 engine restore() 完成引擎接管
     dispatch(applyBoardEdit({
       board: editBoard,
@@ -419,20 +453,20 @@ const Board = () => {
 
       {/* 摆棋模式：上方工具栏 */}
       {editing && (
-        <div className="edit-toolbar">
+        <div className="edit-toolbar" onClick={(e) => e.stopPropagation()}>
           <Space>
             <span style={{ color: '#fff' }}>摆棋中：</span>
             <Radio.Group value={editColor} onChange={(e) => setEditColor(e.target.value)} buttonStyle="solid" size="small">
               <Radio.Button value={1}>黑</Radio.Button>
               <Radio.Button value={-1}>白</Radio.Button>
             </Radio.Group>
-            <Button size="small" icon={<DeleteOutlined />} onClick={() => setEditBoard(Array.from({ length: size }, () => Array(size).fill(0)))}>
+            <Button size="small" icon={<DeleteOutlined />} onClick={(e) => { e.stopPropagation(); const empty = Array.from({ length: size }, () => Array(size).fill(0)); setEditBoard(empty); dispatch(syncEditBoard({ board: empty })); }}>
               清空
             </Button>
-            <Button size="small" type="primary" icon={<CheckOutlined />} onClick={commitEdit}>
+            <Button size="small" type="primary" icon={<CheckOutlined />} onClick={(e) => { e.stopPropagation(); commitEdit(); }}>
               完成
             </Button>
-            <Button size="small" icon={<CloseOutlined />} onClick={cancelEdit}>
+            <Button size="small" icon={<CloseOutlined />} onClick={(e) => { e.stopPropagation(); cancelEdit(); }}>
               取消
             </Button>
           </Space>
@@ -468,7 +502,7 @@ const Board = () => {
         <Button
           className="edit-entry-btn"
           icon={<EditOutlined />}
-          onClick={enterEdit}
+          onClick={(e) => { e.stopPropagation(); enterEdit(); }}
           size="small"
         >
           摆棋

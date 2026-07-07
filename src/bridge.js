@@ -188,7 +188,7 @@ export const hint = async (board_size, history, forbiddenEnabled) => {
 
 // 摆棋接管:用 BOARD 命令把当前局面装入主进程引擎,引擎按当前玩家出子。
 // history: app 格式 [{i, j, role:1|-1}],currentPlayer: 1|-1(下一步该谁走)
-// 返回: { aiMove: {i, j, role} | null, boardSize: number }
+// 返回: { aiMove: {i, j, role} | null, boardSize: number, sentinelPos?: {i,j}, aiTriggerReady?: bool }
 export const setupBoard = async (board_size, history, currentPlayer) => {
   const engineAPI = api();
   if (!engineAPI) {
@@ -203,10 +203,45 @@ export const setupBoard = async (board_size, history, currentPlayer) => {
   const nextPlayerEngine = appRoleToEng(currentPlayer);
   const r = await engineAPI.setupBoard(engineHistory, nextPlayerEngine);
   if (r?.aiMove) {
+    // role 由引擎侧 nextPlayer 决定，而不是硬编码白棋
+    const role = engRoleToApp(nextPlayerEngine);
     return {
-      aiMove: { i: r.aiMove.y, j: r.aiMove.x, role: -1 },
+      aiMove: { i: r.aiMove.y, j: r.aiMove.x, role },
       boardSize: board_size,
     };
   }
+  // nextPlayer=2(AI 接手)时 setupBoard 不立即应手,返回 sentinelPos 让上层在按钮触发后传入。
+  if (r?.aiTriggerReady && r?.sentinelPos) {
+    return {
+      aiMove: null,
+      boardSize: board_size,
+      sentinelPos: { i: r.sentinelPos.y, j: r.sentinelPos.x },
+      aiTriggerReady: true,
+    };
+  }
   return { aiMove: null, boardSize: board_size };
+};
+
+// 触发"AI 接手"应手:用户点 AI 接手按钮后,后台用哨兵子 TURN 取 AI 应手。
+// sentinelPos: app 格式 {i, j} —— 由 setupBoard 返回。
+// 返回: { aiMove: {i, j, role} } —— 仅 AI 应手(哨兵/PASS 不入 UI)。
+export const triggerAiMoveAfterSetup = async (sentinelPos) => {
+  const engineAPI = api();
+  if (!engineAPI) {
+    throw new Error('Rapfi engine API not available');
+  }
+  const r = await engineAPI.triggerAiMoveAfterSetup({
+    x: sentinelPos.j,
+    y: sentinelPos.i,
+  });
+  if (!r?.aiMove) {
+    throw new Error('Rapfi engine did not return an AI move');
+  }
+  return {
+    aiMove: {
+      i: r.aiMove.y,
+      j: r.aiMove.x,
+      role: engRoleToApp(r.aiMove.role),
+    },
+  };
 };

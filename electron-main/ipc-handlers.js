@@ -137,6 +137,16 @@ function registerEngineIpc(getMainWindow) {
     return result;
   }));
 
+  // "AI 接手"按钮触发:用哨兵空位取 AI 应手(PASS 翻转已由 setupBoard 完成)。
+  // sentinelPos: {x, y} 引擎坐标。
+  ipcMain.handle('engine:triggerAiMoveAfterSetup', wrap(async (_e, { sentinelPos } = {}) => {
+    if (!sentinelPos || typeof sentinelPos.x !== 'number' || typeof sentinelPos.y !== 'number') {
+      throw new Error('triggerAiMoveAfterSetup: missing sentinelPos');
+    }
+    const b = await ensureBridge();
+    return await b.triggerAiMoveAfterSetup(sentinelPos);
+  }));
+
   ipcMain.handle('history:list', wrap(async () => {
     const records = await readHistory();
     return { records };

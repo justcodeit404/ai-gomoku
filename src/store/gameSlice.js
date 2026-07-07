@@ -1,10 +1,10 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { board_size, MATCH_BUDGET_MS } from '../config';
+import { board_size, MATCH_BUDGET_MS, DEFAULT_DEPTH } from '../config';
 import { STATUS } from '../status';
 import { checkFiveAt, getWinningLine } from '../game';
 
 import {
-  start, end, move, undo, probe, restore, hint, setupBoard,
+  start, end, move, undo, probe, restore, hint, setupBoard, triggerAiMoveAfterSetup,
 } from '../bridge';
 
 export const probeEngine = createAsyncThunk('game/probeEngine', async () => {
@@ -62,16 +62,32 @@ const createEmptyBoard = () => Array.from({ length: board_size }, () => Array(bo
 
 // 提交摆棋结果:用 BOARD 命令把最终局面装入引擎,引擎按下一步该谁走决定是否立即回应。
 // aiFirst 由 store.aiFirst 决定。
+// nextPlayer=1(人接手,黑该走):引擎装入不思考,等用户走第一手 → _moveViaBoard 触发应手。
+// nextPlayer=-1(AI 接手,白该走):引擎装入时不思考(PASS 翻转),返回 sentinelPos 给上层。
+//   此时 UI 不立即落子,而是显示"AI 接手"按钮,等用户点击后调 triggerAiAfterSetup thunk
+//   用哨兵子 TURN 取 AI 应手(引擎侧 this.history 含 PASS+哨兵+应手,UI 仅含应手)。
 export const commitBoardEdit = createAsyncThunk(
   'game/commitBoardEdit',
-  async ({ history, currentPlayer }, { getState }) => {
-    const { size, aiFirst, timeLimit, forbiddenEnabled } = getState().game;
+  async ({ board, history, currentPlayer }, { getState }) => {
+    const { size, timeLimit, forbiddenEnabled } = getState().game;
     // 1. 用 aiFirst=false 调 start 配引擎参数(避免 aiFirst=true 时引擎自动走第一手 BEGIN 污染局面)
-    //    aiFirst 状态在 setupBoard 走完后由 store.currentPlayer 决定,引擎只关心 nextPlayer
-    await start(size, /* aiFirst */ false, /* depth */ 8, timeLimit, forbiddenEnabled);
+    //    aiFirst 状态由 applyBoardEdit 同步为 false,引擎只关心 nextPlayer
+    await start(size, /* aiFirst */ false, /* depth */ DEFAULT_DEPTH, timeLimit, forbiddenEnabled);
     // 2. 用 setupBoard 把 history 装入引擎,引擎按 nextPlayer 决定是否出子
     const data = await setupBoard(size, history, currentPlayer);
-    return data;
+    // 关键:bridge.setupBoard 返回 {aiMove?, sentinelPos?, aiTriggerReady?},不返回 board/history
+    // 显式补上 board/history(从 thunk 参数),避免 fulfilled 把 store.board 写成 undefined 崩溃
+    return { ...data, board, history, currentPlayer };
+  },
+);
+
+// "AI 接手"按钮触发:用哨兵子 TURN 取 AI 应手。仅在 commitBoardEdit 返回 aiTriggerReady=true 时可调。
+export const triggerAiAfterSetup = createAsyncThunk(
+  'game/triggerAiAfterSetup',
+  async (_arg, { getState }) => {
+    const { sentinelPos } = getState().game;
+    if (!sentinelPos) throw new Error('triggerAiAfterSetup: no sentinelPos saved');
+    return await triggerAiMoveAfterSetup(sentinelPos);
   },
 );
 
@@ -99,9 +115,13 @@ export const initialState = {
   showHint: false,
   theme: 'light',
   debug: false,
-  // 摆棋编辑模式开关：true 时 Board 进入"自由摆放"态。
+  // 摆棋编辑模式开关:true 时 Board 进入"自由摆放"态。
   // 进入 store 让 ActionBar/键盘/SettingsPanel 等都能感知并拒绝误操作。
   editing: false,
+  // 摆棋后 nextPlayer=-1(AI 接手)时记录哨兵空位 + 是否等待"AI 接手"按钮触发。
+  // 这两个字段由 commitBoardEdit.fulfilled 设置,triggerAiAfterSetup.fulfilled 清掉。
+  sentinelPos: null,
+  aiTakeOverReady: false,
   engine: {
     kind: 'unavailable',
     bundled: false,
@@ -151,6 +171,34 @@ function settleWinner(state) {
     state.winningLine = getWinningLine(state.board, last.i, last.j, last.role);
     state.showResultModal = true;
   }
+}
+
+// 全盘扫描是否已有五连：摆棋构造的 history 按 (i,j) 自然序排，
+// 末位子未必是成五的那颗，故不能用 settleWinner(只看末位)。
+// 命中时返回成五的 (i,j,role)，供上层设置终局；否则返回 null。
+// 多处成五时优先返回先扫到的（黑先于白，行优先），不影响判定结论。
+function scanWinnerFromBoard(board) {
+  const size = board.length;
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+      const role = board[i][j];
+      if (role !== 1 && role !== -1) continue;
+      if (checkFiveAt(board, i, j, role)) {
+        return { i, j, role };
+      }
+    }
+  }
+  return null;
+}
+
+// 摆棋专用的胜负结算：全盘扫五，命中即设终局 + 弹窗
+function settleWinnerFromBoard(state) {
+  const hit = scanWinnerFromBoard(state.board);
+  if (!hit) return;
+  state.winner = hit.role;
+  state.status = STATUS.IDLE;
+  state.winningLine = getWinningLine(state.board, hit.i, hit.j, hit.role);
+  state.showResultModal = true;
 }
 
 // 落子并切换当前方；同时结算上一位玩家的用时。
@@ -317,47 +365,57 @@ export const gameSlice = createSlice({
       })
       .addCase(commitBoardEdit.fulfilled, (state, action) => {
         const p = action.payload || {};
+        // 关键修复:state.currentPlayer 已经被 applyBoardEdit(同步 dispatch)正确设过
+        // 这里不要从 p.current_player 读(bridge.setupBoard 没返回这个字段,旧代码会写成 undefined)
+        // 也不要从 p.currentPlayer 读(thunk 的修复让 p.currentPlayer 是正确的,等价的)
+        // 直接保留 applyBoardEdit 设的值即可
         state.board = p.board;
-        state.currentPlayer = p.current_player;
         state.history = p.history;
         state.status = STATUS.GAMING;
         state.turnStartedAt = Date.now();
         state.hintMove = null;
         state.editing = false;
         state.loading = false;
-        if (p.aiMove) {
-          // 引擎已回应一手：直接在 store 应用,无需再 dispatch movePiece
+        // 摆棋后引擎固定执白，同步 aiFirst 避免 TurnIndicator/提示错位
+        state.aiFirst = false;
+        // 摆出的局面可能已经五连（且成五那颗未必在 history 末位），用全盘扫描判定
+        settleWinnerFromBoard(state);
+        if (p.aiMove && state.status === STATUS.GAMING) {
+          // nextPlayer=1(人接手)或 nextPlayer=2(AI 立即应手)时引擎已应手
           const { i, j, role } = p.aiMove;
-          // 复用 commitMove 的逻辑,直接展开
-          let elapsedMs = 0;
-          if (state.turnStartedAt) {
-            elapsedMs = Date.now() - state.turnStartedAt;
-            // deductTime 用上一个 currentPlayer,这里先手动扣一次
-            if (state.currentPlayer === 1) {
-              state.blackTimeMs = Math.max(0, state.blackTimeMs - elapsedMs);
-            } else if (state.currentPlayer === -1) {
-              state.whiteTimeMs = Math.max(0, state.whiteTimeMs - elapsedMs);
-            }
-          }
-          state.board[i][j] = role;
-          state.history.push({ i, j, role, elapsedMs });
-          state.currentPlayer = -role;
-          state.turnStartedAt = Date.now();
-          // 胜局检查
-          const last = state.history[state.history.length - 1];
-          if (last && checkFiveAt(state.board, last.i, last.j, last.role)) {
-            state.winner = last.role;
-            state.status = STATUS.IDLE;
-            state.winningLine = getWinningLine(state.board, last.i, last.j, last.role);
-            state.showResultModal = true;
-          }
+          commitMove(state, role, i, j);
+          // AI 子也可能直接成五，用全盘扫描兜底（末位即 AI 子，等价于 settleWinner 但语义统一）
+          settleWinnerFromBoard(state);
         }
+        // nextPlayer=-1（AI 接手）时 setupBoard 不立即应手，记录 sentinelPos 等按钮触发
+        state.sentinelPos = p.sentinelPos || null;
+        state.aiTakeOverReady = !!p.aiTriggerReady;
       })
       .addCase(commitBoardEdit.rejected, (state, action) => {
         state.loading = false;
         state.engine.lastError = action.error?.message || 'board edit commit failed';
         // 引擎接管失败时,保持编辑态让用户可以重试或取消
         state.editing = false;
+        state.sentinelPos = null;
+        state.aiTakeOverReady = false;
+      })
+      .addCase(triggerAiAfterSetup.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(triggerAiAfterSetup.fulfilled, (state, action) => {
+        const p = action.payload || {};
+        state.loading = false;
+        state.sentinelPos = null;
+        state.aiTakeOverReady = false;
+        if (p.aiMove && state.status === STATUS.GAMING) {
+          const { i, j, role } = p.aiMove;
+          commitMove(state, role, i, j);
+          settleWinnerFromBoard(state);
+        }
+      })
+      .addCase(triggerAiAfterSetup.rejected, (state, action) => {
+        state.loading = false;
+        state.engine.lastError = action.error?.message || 'AI take over failed';
       })
       .addCase(movePiece.pending, (state) => {
         state.loading = true;
