@@ -47,11 +47,14 @@ class RapfiBridge {
     this.maxDepth = 0;
     this.cachedForbid = null;
     this.aiFirst = false; // 本局 AI 是否先手
-    // 本局是否源自摆棋：源自摆棋的局，走序可能不合法，不能用 TURN 重放，
-    // 一律用 BOARD+DONE 从 UI history 全量重建局面（参照悔棋"以 UI history 为真源"）。
+    // AI 执子的绝对色:1=黑 2=白。BOARD 协议 field 是相对色(1=己方 2=对方),必须用 selfRole 映射。
+    this.selfRole = 2;
+    // fromSetup:下一手人走须走 _moveViaBoard(BOARD)。
+    // setupGame:整局源自摆棋,undo 不可用 BEGIN/TURN 重放(开局子不是对弈走出来的)。
     this.fromSetup = false;
+    this.setupGame = false;
     this._setupNextPlayer = 1;
-    // 摆棋首应手后跳过一次防御性同步,避免 PASS 步数差触发 _syncToHistory 丢状态。
+    // 摆棋首应手后跳过一次防御性同步。
     this._lastMoveFromSetup = false;
   }
 
@@ -93,7 +96,10 @@ class RapfiBridge {
     this.timeoutMatchMs = Math.max(100, timeoutMatchMs | 0);
     this.maxDepth = Math.max(0, maxDepth | 0);
     this.aiFirst = !!aiFirst;
+    // aiFirst=true → AI 执黑(1); false → AI 执白(2)。摆棋路径会再强制 selfRole=2。
+    this.selfRole = this.aiFirst ? 1 : 2;
     this.fromSetup = false;
+    this.setupGame = false;
     this._setupNextPlayer = 1;
     this._lastMoveFromSetup = false;
     this.history = [];
@@ -149,6 +155,11 @@ class RapfiBridge {
       if (!strictMatch && !isPassExtra) {
         log.warn('engine history mismatch, resyncing before move',
           'expected=', JSON.stringify(expected), 'this.history=', JSON.stringify(engineHist));
+        // 摆棋局不能 BEGIN/TURN 重放开局子,改走 BOARD 全量路径
+        if (this.setupGame) {
+          this.history = expected;
+          return this._moveViaBoard(x, y, uiHistory);
+        }
         await this._syncToHistory(expected);
       }
     }
@@ -177,119 +188,62 @@ class RapfiBridge {
   }
 
   // 用标准 Piskvork BOARD 命令获取当前局面的下一步提示。
-  // 调用前需先 start() 配置好 size/rule/time。history 为引擎格式 [{x, y, role}]。
-  // 注意：BOARD 只在独立 hint 进程中使用，不进入真实对局，避免状态差异。
-  async hint(history) {
+  // history 为引擎格式绝对色 [{x, y, role:1|2}]；selfRole 是要提示的那一方绝对色。
+  // BOARD field 必须相对 selfRole(1=己 2=敌)。hint 在独立进程,不污染对局。
+  async hint(history, selfRole = 1) {
     if (!this.ready()) throw new Error('engine not ready');
-    const lines = ['BOARD'];
-    for (const m of history) {
-      const role = Number(m.role);
-      if (role === 1 || role === 2) {
-        lines.push(`${m.x},${m.y},${role}`);
-      }
-    }
-    lines.push('DONE');
-    const reply = await this._sendAndExpect(lines.join('\n'), /^\d+,\d+$/, {
-      timeoutMs: 3000,
-    });
+    this.selfRole = selfRole === 2 ? 2 : 1;
+    const reply = await this._placeBoardAndReply(history || []);
     const [rx, ry] = reply.split(',').map(Number);
     return { x: rx, y: ry };
   }
 
   // 摆棋接管。
-  // Rapfi YXBOARD 装入后静默不 think,必须再发 TURN 才会 search。
+  // 关键:Gomocup BOARD 的 field 是相对色(1=己方 2=对方),不是黑白绝对色。
+  // 摆棋后 UI 固定 AI 执白(selfRole=2),装入时必须把白→1、黑→2,否则引擎按执黑搜索。
   // 分路径:
-  //   nextPlayer=1 (人接手,黑该走): YXBOARD 装入 → fromSetup=true
-  //     → 等用户走第一手 → _moveViaBoard 用 BOARD 装入"摆棋+人第一手"取 AI 应手。
-  //   nextPlayer=2 (AI 接手,白该走): YXBOARD 装入 → fromSetup=true + 返回 sentinelPos
-  //     → 用户点"AI 接手" → triggerAiMoveAfterSetup 走 YXBOARD+TURN(空位 sentinel)取应手。
-  //     → UI 仅显示 AI 应手;sentinel 不入引擎 history。
-  // history: [{x, y, role:1|2}...]  已装入棋盘的全部历史子
-  // nextPlayer: 1=下一步黑走, 2=下一步白走
-  // 返回:
-  //   nextPlayer=1: { aiMove: null }
-  //   nextPlayer=2: { aiMove: null, sentinelPos: {x,y}, aiTriggerReady: true }
+  //   nextPlayer=1 (人接手,黑该走): fromSetup=true,等用户第一手 → _moveViaBoard 走 BOARD 应手
+  //   nextPlayer=2 (AI 接手,白该走): fromSetup=true + aiTriggerReady,用户点"AI 接手"后 BOARD 应手
+  // history: [{x, y, role:1|2}...] 绝对色黑/白
+  // nextPlayer: 1=黑走, 2=白走
   async setupBoard(history, nextPlayer) {
     if (!this.ready()) throw new Error('engine not ready');
     this.history = history.map((h) => ({ x: h.x, y: h.y, role: Number(h.role) }));
     this.cachedForbid = null;
+    // 摆棋后引擎固定执白(与 gameSlice aiFirst=false 一致)
+    this.selfRole = 2;
+    this.aiFirst = false;
     this._setupNextPlayer = nextPlayer === 2 ? 2 : 1;
+    this.fromSetup = true;
+    this.setupGame = true;
 
     if (nextPlayer === 2) {
-      // AI 接手(白该走):装入后静默,等"AI 接手"按钮再 YXBOARD+TURN。
-      // sentinelPos 仅作空位 TURN 坐标(TURN 已占位会让 Rapfi assert 崩溃),不入 history。
-      const sentinel = this._pickSentinel();
-      await this._placeBoard(history);
-      this.fromSetup = true;
-      this.sentinelPos = { x: sentinel.x, y: sentinel.y };
-      return {
-        aiMove: null,
-        sentinelPos: { x: sentinel.x, y: sentinel.y },
-        aiTriggerReady: true,
-      };
+      return { aiMove: null, aiTriggerReady: true };
     }
-
-    // 人接手(黑该走):装入后不引擎应手,等用户走第一手
-    await this._placeBoard(history);
-    this.fromSetup = true;
     return { aiMove: null };
   }
 
-  // "AI 接手"按钮:YXBOARD+TURN 让 Rapfi 应一手。
-  // TURN 坐标必须是空位(sentinelPos),否则 Rapfi 内部 assert 崩溃。
-  // UI 契约:摆棋后引擎执白(nextPlayer=2),应手 role 固定为白(2),不跟首子色。
+  // "AI 接手":用 BOARD(相对色,AI=白=己方)装入当前局面并立即应手。
+  // 不再用 YXBOARD+TURN 空位哨兵——那会让 selfColor 跟首子走,执白局面却按执黑想。
   // 返回: { aiMove: {x, y, role: -1|1} }
-  async triggerAiMoveAfterSetup(sentinelPos) {
+  async triggerAiMoveAfterSetup() {
     if (!this.ready()) throw new Error('engine not ready');
     if (!this.fromSetup) throw new Error('engine not in fromSetup state');
 
-    const isOccupied = this.history.some((h) => h.x === sentinelPos.x && h.y === sentinelPos.y);
-    if (isOccupied) {
-      throw new Error(`sentinelPos ${sentinelPos.x},${sentinelPos.y} is occupied by setup history`);
-    }
-
-    const reply = await this._yxBoardAndTurn(this.history, sentinelPos);
+    this.selfRole = 2;
+    const reply = await this._placeBoardAndReply(this.history);
     const [rx, ry] = reply.split(',').map(Number);
-
-    // 摆棋后 UI 固定引擎执白;AI 接手路径只在 nextPlayer=2 时触发。
-    const aiRole = this._setupNextPlayer === 2 ? 2 : 1;
+    const aiRole = this.selfRole;
     this.history.push({ x: rx, y: ry, role: aiRole });
     this.fromSetup = false;
-    this.sentinelPos = null;
     this.cachedForbid = null;
-    // 下一手 move() 跳过防御性同步,避免 PASS 步数差触发 _syncToHistory 丢状态
     this._lastMoveFromSetup = true;
     return { aiMove: { x: rx, y: ry, role: engRoleToApp(aiRole) } };
   }
 
-  // 选空位作 TURN 哨兵坐标:从角落开始找第一个不在 history 的点。
-  // 哨兵不入 this.history / UI history,仅满足"TURN 必须是空位"。
-  _pickSentinel() {
-    const size = this.size || 15;
-    const taken = new Set(this.history.map((h) => `${h.x},${h.y}`));
-    const corners = [
-      { x: 0, y: 0 },
-      { x: size - 1, y: size - 1 },
-      { x: 0, y: size - 1 },
-      { x: size - 1, y: 0 },
-    ];
-    for (const c of corners) {
-      if (!taken.has(`${c.x},${c.y}`)) return c;
-    }
-    // 角落都被占了就退而求其次:扫描棋盘找第一个空位(几乎不会发生)
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        if (!taken.has(`${x},${y}`)) return { x, y };
-      }
-    }
-    throw new Error('no empty cell for sentinel');
-  }
+  // ===== BOARD 装入 =====
+  // Gomocup BOARD field: 1=己方 2=对方(相对 selfRole),不是黑白绝对色。
 
-  // ===== BOARD/YXBOARD 装入公共部分 =====
-  // 抽 helper 后,_placeBoard / _placeBoardAndReply / _yxBoardAndTurn 都成 1-3 行薄方法。
-  // 优点：4 份 ~30 行的重复 → 3 个 helper + 3 个薄壳，行为与原版一致。
-
-  // 无条件发 START + config（用于 start() / undo() / _syncToHistory()，都假定进程刚被 end+respawn）。
   async _sendStartAndConfig() {
     await this._sendAndExpect(`START ${this.size}`, /^OK$/);
     this._sendConfig({
@@ -301,30 +255,36 @@ class RapfiBridge {
     });
   }
 
-  // 若引擎死亡则重生;若重生则补发 START + config。
-  // 摆棋场景下 history 可能走序非法,引擎随时可能 assert 崩溃,这条路径必须能复用。
   async _ensureEngineStarted() {
     const respawned = await this._respawnIfNeeded();
     if (!respawned) return;
     await this._sendStartAndConfig();
   }
 
-  // app 格式 {i,j,role:1|-1} / 引擎格式 {x,y,role:1|2} → BOARD/YXBOARD 命令行(含 DONE)。
-  // 不等服务端响应(YXBOARD 静默 / 调用方按需 _expectLine)。
-  _sendBoardLines(historyOrUiHistory, command) {
-    const lines = [command];
+  // app/engine history 项 → {x,y,role:1|2} 绝对色
+  _toAbsMove(h) {
+    if (h.i !== undefined || h.j !== undefined) {
+      return { x: h.j, y: h.i, role: h.role === 1 ? 1 : 2 };
+    }
+    const role = Number(h.role);
+    return { x: h.x, y: h.y, role: role === 1 ? 1 : 2 };
+  }
+
+  // BOARD 命令行(相对 selfRole)。不等待响应。
+  _sendBoardLines(historyOrUiHistory) {
+    const lines = ['BOARD'];
+    const self = this.selfRole === 1 ? 1 : 2;
     for (const h of historyOrUiHistory) {
-      const m = h.i !== undefined || h.j !== undefined
-        ? { x: h.j, y: h.i, role: h.role === 1 ? 1 : 2 }
-        : { x: h.x, y: h.y, role: Number(h.role) };
-      if (m.role === 1 || m.role === 2) lines.push(`${m.x},${m.y},${m.role}`);
+      const m = this._toAbsMove(h);
+      if (m.role !== 1 && m.role !== 2) continue;
+      const field = m.role === self ? 1 : 2;
+      lines.push(`${m.x},${m.y},${field}`);
     }
     lines.push('DONE');
     this._sendLine(`INFO time_left ${Math.max(0, this.timeLeftMs | 0)}`);
     this._sendLine(lines.join('\n'));
   }
 
-  // 只等下一行匹配 expect,不发命令(用于 BOARD+DONE 后引擎自发应手的场景)。
   async _expectLine(expect, timeoutMs, label = '<expect>') {
     if (!this.ready()) return Promise.reject(new Error('engine not ready'));
     const seq = ++this.seq;
@@ -335,57 +295,29 @@ class RapfiBridge {
     });
   }
 
-  // 用 YXBOARD+DONE 把 history 装入引擎,装入后不引擎应手(不调 think())。
-  // history 兼容 app 格式 {i,j,role:1|-1} 与引擎格式 {x,y,role:1|2}。
-  // 摆棋开局/undo 后恢复都走这里。
-  async _placeBoard(historyOrUiHistory) {
-    await this._ensureEngineStarted();
-    this._sendBoardLines(historyOrUiHistory, 'YXBOARD');
-  }
-
-  // 用 BOARD+DONE 把给定 history 装入引擎并取应手。
-  // 返回引擎应答的原始坐标行(如 "7,8")。每次都全量重建,引擎无内部状态分叉问题。
-  // 这是摆棋场景下"以 UI history 为真源重建"的统一入口,被 _moveViaBoard/undo 复用。
+  // BOARD+DONE 装入并取应手。摆棋/hint/undo 非法序共用。
   async _placeBoardAndReply(historyOrUiHistory) {
     await this._ensureEngineStarted();
-    this._sendBoardLines(historyOrUiHistory, 'BOARD');
+    this._sendBoardLines(historyOrUiHistory);
     return this._expectLine(/^\d+,\d+$/, this._stepTimeout(), 'board-reply');
   }
 
-  // YXBOARD+TURN 是 Yixin 设计意图(hash 命中更准)。仅用于 triggerAiMoveAfterSetup。
-  async _yxBoardAndTurn(historyOrUiHistory, lastOpponentMove) {
-    await this._ensureEngineStarted();
-    this._sendBoardLines(historyOrUiHistory, 'YXBOARD');
-    this._sendLine(`INFO time_left ${Math.max(0, this.timeLeftMs | 0)}`);
-    return this._sendAndExpect(
-      `TURN ${lastOpponentMove.x},${lastOpponentMove.y}`,
-      /^\d+,\d+$/,
-      { timeoutMs: this._stepTimeout() },
-    );
-  }
-
-  // 摆棋局下 human 的【第一手】走子：仅在 nextPlayer=人 时被调用一次。
-  // 用 BOARD+DONE 把"摆棋初始局面 + 人这一手"装入引擎,引擎替白(AI)应一手,
-  // 然后立即切回 TURN 模式——之后所有人走都走正常 TURN 路径,保留 Rapfi 缓存,棋力正常。
+  // 摆棋局下 human 的【第一手】：BOARD(相对色)+DONE 装入"摆棋+人这一手",AI(selfRole)应手,
+  // 然后切回 TURN 模式。
   async _moveViaBoard(x, y, uiHistory) {
     // uiHistory 已含用户刚下的这一步(tempMove 已 push)；以此为真源 BOARD 装入。
     const src = (uiHistory && uiHistory.length > 0) ? uiHistory : this.history;
+    // 摆棋路径 AI 固定执白;兜底用 selfRole
+    this.selfRole = this.selfRole === 1 ? 1 : 2;
     const reply = await this._placeBoardAndReply(src);
     const [rx, ry] = reply.split(',').map(Number);
 
     // 同步引擎侧 history：uiHistory 已含用户步,只再 push AI 应手(不要 double-push 用户步)。
-    const lastUser = uiHistory && uiHistory.length > 0 ? uiHistory[uiHistory.length - 1] : null;
-    const userRole = lastUser ? (lastUser.role === 1 ? 1 : 2) : (this.history.length % 2 === 0 ? 1 : 2);
-    const aiRole = userRole === 1 ? 2 : 1;
-    this.history = (uiHistory || this.history).map((h) => ({
-      x: h.j !== undefined ? h.j : h.x,
-      y: h.i !== undefined ? h.i : h.y,
-      role: h.role === 1 ? 1 : 2,
-    }));
+    const aiRole = this.selfRole;
+    this.history = (uiHistory || this.history).map((h) => this._toAbsMove(h));
     this.history.push({ x: rx, y: ry, role: aiRole });
     this.cachedForbid = null;
 
-    // 第一手完成,局面已是"摆棋初始 + 真实交替走序",后续切回 TURN 保留缓存
     this.fromSetup = false;
     this._lastMoveFromSetup = true;
 
@@ -418,28 +350,22 @@ class RapfiBridge {
     this.timeoutMatchMs = Math.max(100, (opts.timeoutMatchMs || this.timeoutMatchMs || 10 * 60 * 1000) | 0);
     this.maxDepth = Math.max(0, (opts.maxDepth || this.maxDepth || 0) | 0);
     this.aiFirst = opts.aiFirst !== undefined ? !!opts.aiFirst : this.aiFirst;
+    this.selfRole = this.aiFirst ? 1 : 2;
 
     await this.end();
     await this._respawnIfNeeded();
     await this._sendStartAndConfig();
 
-    // 摆棋局的剩余 history 可能含非法初始走序（黑连下两手等），TURN 重放会让引擎卡死。
-    // 用交替性判断选路径：合法交替 → TURN 重放（保留 Rapfi hash 缓存，棋力正常）；
-    // 否则 → BOARD 装入 remaining 并消费引擎那手应手，置 fromSetup=true，
-    //        让下一手 _moveViaBoard 用 BOARD 装入"remaining+人新一手"取 AI 应手并切回 TURN。
-    if (this._isAlternatingHistory(remaining)) {
+    // 摆棋整局 / 非交替序：不能 BEGIN/TURN 重放(开局子不是对弈走出,TURN 会错边或卡死)。
+    // 一律 BOARD(相对色)装入 remaining,消费并丢弃引擎应手,fromSetup=true 让下一手走 _moveViaBoard。
+    // 正常对局且交替合法 → TURN 重放保 hash。
+    if (!this.setupGame && this._isAlternatingHistory(remaining)) {
       await this._replayHistory(remaining);
       this.fromSetup = false;
     } else {
-      // BOARD 装入非法局面；DONE 会触发引擎出子，这里消费并丢弃（悔棋后轮到人，不该有 AI 应手）。
-      // 丢弃不会污染：下一步 _moveViaBoard 会再次 BOARD 全量重建，引擎内部状态被覆盖。
-      const lines = ['BOARD'];
-      for (const m of remaining) {
-        if (m.role === 1 || m.role === 2) lines.push(`${m.x},${m.y},${m.role}`);
+      if (remaining.length > 0) {
+        await this._placeBoardAndReply(remaining);
       }
-      lines.push('DONE');
-      this._sendLine(`INFO time_left ${Math.max(0, this.timeLeftMs | 0)}`);
-      await this._sendAndExpect(lines.join('\n'), /^\d+,\d+$/, { timeoutMs: this._stepTimeout() });
       this.fromSetup = true;
     }
     this.history = remaining;

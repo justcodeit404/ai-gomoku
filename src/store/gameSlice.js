@@ -56,7 +56,8 @@ export const fetchHint = createAsyncThunk('game/fetchHint', async (_, { getState
   if (state.status !== STATUS.GAMING || state.loading || state.history.length === 0) {
     return null;
   }
-  return await hint(state.size, state.history, state.forbiddenEnabled);
+  // 提示当前行棋方,BOARD 以 currentPlayer 为"己方"
+  return await hint(state.size, state.history, state.forbiddenEnabled, state.currentPlayer);
 });
 
 const createEmptyBoard = () => Array.from({ length: board_size }, () => Array(board_size).fill(0));
@@ -64,31 +65,26 @@ const createEmptyBoard = () => Array.from({ length: board_size }, () => Array(bo
 // 提交摆棋结果:用 BOARD 命令把最终局面装入引擎,引擎按下一步该谁走决定是否立即回应。
 // aiFirst 由 store.aiFirst 决定。
 // nextPlayer=1(人接手,黑该走):引擎装入不思考,等用户走第一手 → _moveViaBoard 触发应手。
-// nextPlayer=-1(AI 接手,白该走):引擎装入不思考,返回 sentinelPos 给上层。
-//   此时 UI 不立即落子,而是显示"AI 接手"按钮,等用户点击后调 triggerAiAfterSetup thunk
-//   用哨兵空位 TURN 取 AI 应手(哨兵不入 UI history)。
+// nextPlayer=-1(AI 接手,白该走):不立即出子,返回 aiTriggerReady。
+//   用户点"AI 接手"后 triggerAiAfterSetup 走 BOARD(相对色,AI 白=己方)取应手。
 export const commitBoardEdit = createAsyncThunk(
   'game/commitBoardEdit',
   async ({ board, history, currentPlayer }, { getState }) => {
     const { size, timeLimit, forbiddenEnabled } = getState().game;
-    // 1. 用 aiFirst=false 调 start 配引擎参数(避免 aiFirst=true 时引擎自动走第一手 BEGIN 污染局面)
-    //    aiFirst 状态由 applyBoardEdit 同步为 false,引擎只关心 nextPlayer
+    // 1. aiFirst=false:避免 BEGIN 污染;摆棋后引擎固定执白
     await start(size, /* aiFirst */ false, /* depth */ DEFAULT_DEPTH, timeLimit, forbiddenEnabled);
-    // 2. 用 setupBoard 把 history 装入引擎,引擎按 nextPlayer 决定是否出子
+    // 2. setupBoard 只标记 fromSetup / aiTriggerReady,真正应手等用户或 AI 接手按钮
     const data = await setupBoard(size, history, currentPlayer);
-    // 关键:bridge.setupBoard 返回 {aiMove?, sentinelPos?, aiTriggerReady?},不返回 board/history
-    // 显式补上 board/history(从 thunk 参数),避免 fulfilled 把 store.board 写成 undefined 崩溃
+    // bridge 不返回 board/history,显式补上避免 fulfilled 写成 undefined
     return { ...data, board, history, currentPlayer };
   },
 );
 
-// "AI 接手"按钮触发:用哨兵子 TURN 取 AI 应手。仅在 commitBoardEdit 返回 aiTriggerReady=true 时可调。
+// "AI 接手"按钮:BOARD 相对色装入后立即应一手(白)。
 export const triggerAiAfterSetup = createAsyncThunk(
   'game/triggerAiAfterSetup',
-  async (_arg, { getState }) => {
-    const { sentinelPos } = getState().game;
-    if (!sentinelPos) throw new Error('triggerAiAfterSetup: no sentinelPos saved');
-    return await triggerAiMoveAfterSetup(sentinelPos);
+  async () => {
+    return await triggerAiMoveAfterSetup();
   },
 );
 
@@ -119,8 +115,8 @@ export const initialState = {
   // 摆棋编辑模式开关:true 时 Board 进入"自由摆放"态。
   // 进入 store 让 ActionBar/键盘/SettingsPanel 等都能感知并拒绝误操作。
   editing: false,
-  // 摆棋后 nextPlayer=-1(AI 接手)时记录哨兵空位 + 是否等待"AI 接手"按钮触发。
-  // 这两个字段由 commitBoardEdit.fulfilled 设置,triggerAiAfterSetup.fulfilled 清掉。
+  // 摆棋后 AI 接手等待标记。commitBoardEdit.fulfilled 设置,triggerAiAfterSetup 清掉。
+  // sentinelPos 已废弃(旧 YXBOARD+TURN 哨兵),保留字段避免旧 persist 炸。
   sentinelPos: null,
   aiTakeOverReady: false,
   engine: {
@@ -394,8 +390,8 @@ export const gameSlice = createSlice({
           // AI 子也可能直接成五，用全盘扫描兜底（末位即 AI 子，等价于 settleWinner 但语义统一）
           settleWinnerFromBoard(state);
         }
-        // nextPlayer=-1（AI 接手）时 setupBoard 不立即应手，记录 sentinelPos 等按钮触发
-        state.sentinelPos = p.sentinelPos || null;
+        // nextPlayer=-1（AI 接手）时不立即应手，等"AI 接手"按钮
+        state.sentinelPos = null;
         state.aiTakeOverReady = !!p.aiTriggerReady;
       })
       .addCase(commitBoardEdit.rejected, (state, action) => {

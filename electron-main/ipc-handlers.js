@@ -85,7 +85,7 @@ function registerEngineIpc() {
     return { popped };
   }));
 
-  ipcMain.handle('engine:hint', wrap(async (_e, { opts, history } = {}) => {
+  ipcMain.handle('engine:hint', wrap(async (_e, { opts, history, selfRole } = {}) => {
     const binaryPath = resolveRapfiBinary();
     if (!binaryPath) {
       throw new Error('Rapfi engine binary not found (looked in release/rapfi/)');
@@ -93,7 +93,11 @@ function registerEngineIpc() {
     const b = new RapfiBridge({ binaryPath });
     try {
       await b.start(opts || {});
-      const move = await b.hint(history || []);
+      // selfRole: 要提示的一方绝对色(1黑/2白);默认跟 aiFirst
+      const side = selfRole === 1 || selfRole === 2
+        ? selfRole
+        : (opts?.aiFirst ? 1 : 2);
+      const move = await b.hint(history || [], side);
       return { move };
     } finally {
       await b.end().catch(() => {});
@@ -106,14 +110,10 @@ function registerEngineIpc() {
     return result;
   }));
 
-  // "AI 接手"按钮触发:用哨兵空位取 AI 应手(PASS 翻转已由 setupBoard 完成)。
-  // sentinelPos: {x, y} 引擎坐标。
-  ipcMain.handle('engine:triggerAiMoveAfterSetup', wrap(async (_e, { sentinelPos } = {}) => {
-    if (!sentinelPos || typeof sentinelPos.x !== 'number' || typeof sentinelPos.y !== 'number') {
-      throw new Error('triggerAiMoveAfterSetup: missing sentinelPos');
-    }
+  // "AI 接手":BOARD 相对色装入后立即应手(AI 执白)
+  ipcMain.handle('engine:triggerAiMoveAfterSetup', wrap(async () => {
     const b = await ensureBridge();
-    return await b.triggerAiMoveAfterSetup(sentinelPos);
+    return await b.triggerAiMoveAfterSetup();
   }));
 
   ipcMain.handle('history:list', wrap(async () => {

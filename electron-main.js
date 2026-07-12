@@ -19,11 +19,19 @@ function createWindow() {
     height: 900,
     minWidth: 1000,
     minHeight: 680,
+    // 等首屏 ready 再显示，避免白屏干等；背景色贴近墨韵主题
+    show: false,
+    backgroundColor: '#1a1a1a',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, 'src', 'preload.js'),
+      // 渲染进程不需要后台节流以外的花活；关闭拼写检查略减启动开销
+      spellcheck: false,
     },
+  });
+  mainWindow.once('ready-to-show', () => {
+    if (mainWindow) mainWindow.show();
   });
   const indexPath = path.join(__dirname, 'build', 'index.html');
   console.log('[Electron] loading', indexPath);

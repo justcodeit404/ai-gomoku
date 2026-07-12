@@ -37,12 +37,10 @@ Packaging requires `release/rapfi/Rapfi.exe` and its DLLs/weights to exist. If E
 
 ### Rapfi protocol quirks (hard-won lessons)
 
-- **YXBOARD = silent load, must pair with TURN**. YXBOARD装入后引擎**静默不输出任何响应**(不 think),必须再发 `TURN x,y` 才会 search + 应手。
-- **Rapfi 不支持 INFO color 命令**。selfColor 完全由**首子**决定：首子 role=1 → Rapfi 执黑；首子 role=2 → Rapfi 执白。
-- **TURN 坐标必须是空位**。Rapfi 把 TURN x,y 视为"OPPO 刚下的最后一步"并试图落子,TURN 到已有子的坐标会触发 Rapfi 内部 assert 崩溃(exit 3221225477)。
-- **PASS 不计入 history step**。Rapfi 装入时自动 insert PASS 翻转 sideToMove,PASS 是虚着,history 步数不变。this.history 不需要 push PASS 占位。
-- **摆棋协议**:`YXBOARD + <history> + DONE` 装入 → `TURN <空位>` 触发应手。Role 由首子决定,不固定。
-- **BOARD vs YXBOARD**:BOARD 装入完立即应手(清空 hash,棋力弱);YXBOARD+TURN 保留 hash 命中(实测 VC 32.9% vs 27.1%)。
+- **BOARD field 是相对色,不是黑白**。Gomocup 规定 `1=己方 2=对方`。本应用 UI 存绝对色(1黑/2白),发 BOARD 前必须按 `selfRole`(AI 执子色)映射。摆棋后 AI 固定执白 → 白发 1、黑发 2。
+- **摆棋应手走 BOARD+DONE**(相对色),不要用绝对色 BOARD,也不要 YXBOARD+TURN 空位哨兵(selfColor 会跟首子,执白却按执黑想)。
+- **TURN 坐标必须是空位**。Rapfi 把 TURN x,y 视为"OPPO 刚下的最后一步",TURN 到已有子会 assert 崩溃(exit 3221225477)。
+- **正常对局**仍用 BEGIN/TURN 交替;仅摆棋首应手与非法序悔棋用 BOARD 全量重建。
 
 ### Redux state (`src/store/gameSlice.js`)
 

@@ -16,8 +16,8 @@ contextBridge.exposeInMainWorld('engineAPI', {
   start: (opts) => invoke('engine:start', opts),
   move: (x, y, history) => invoke('engine:move', { x, y, history }),
   undo: (steps = 1, history) => invoke('engine:undo', { steps, history }),
-  hint: (opts, history) => invoke('engine:hint', { opts, history }),
+  hint: (opts, history, selfRole) => invoke('engine:hint', { opts, history, selfRole }),
   setupBoard: (history, nextPlayer) => invoke('engine:setupBoard', { history, nextPlayer }),
-  triggerAiMoveAfterSetup: (sentinelPos) => invoke('engine:triggerAiMoveAfterSetup', { sentinelPos }),
+  triggerAiMoveAfterSetup: () => invoke('engine:triggerAiMoveAfterSetup'),
   end: () => invoke('engine:end'),
 });
