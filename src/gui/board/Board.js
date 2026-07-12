@@ -60,9 +60,11 @@ const Board = () => {
     size: s.game.size,
     winningLine: s.game.winningLine,
     editing: s.game.editing,
+    timeLimit: s.game.timeLimit,
+    aiTakeOverReady: s.game.aiTakeOverReady,
   }), shallowEqual);
 
-  const { board, currentPlayer, history, winner, aiFirst, status, loading, forbiddenEnabled, showMoveNumbers, soundEnabled, showHint, hintMove, size, winningLine, editing } = sel;
+  const { board, currentPlayer, history, winner, aiFirst, status, loading, forbiddenEnabled, showMoveNumbers, soundEnabled, showHint, hintMove, size, winningLine, editing, timeLimit, aiTakeOverReady } = sel;
 
   const [hover, setHover] = useState(null);
   const [forbiddenMsg, setForbiddenMsg] = useState(null);
@@ -168,12 +170,12 @@ const Board = () => {
       board_size: size,
       history: restoredHistory,
       currentPlayer: tail ? -tail.role : 1,
-      timeLimit: 5000,
+      timeLimit,
       forbiddenEnabled,
       triggerAiMove: false,
     }));
     preEditRef.current = null;
-  }, [dispatch, size, forbiddenEnabled]);
+  }, [dispatch, size, forbiddenEnabled, timeLimit]);
 
   // 摆棋完成：按 editColor 起步、黑/白交替构造 history(非按 (i,j) 扫描),
   // 这样 engine 端 _replayHistory 的"两步一组"TURN 重放能稳定工作。
@@ -262,6 +264,8 @@ const Board = () => {
       return;
     }
     if (loading || !isGaming) return;
+    // 只允许人类执子时落子;AI 接手等待中禁止点盘
+    if (aiTakeOverReady || currentPlayer !== humanRole) return;
     if (board[i][j] !== 0) return;
     if (forbiddenEnabled && currentPlayer === 1) {
       const evalBoard = buildWalledBoard(board, size);
@@ -279,7 +283,7 @@ const Board = () => {
       return;
     }
     dispatch(movePiece({ position: [i, j] }));
-  }, [editing, onEditCellClick, loading, isGaming, board, forbiddenEnabled, currentPlayer, size, dispatch]);
+  }, [editing, onEditCellClick, loading, isGaming, aiTakeOverReady, humanRole, board, forbiddenEnabled, currentPlayer, size, dispatch]);
 
   const boardRef = useRef(null);
   const rectRef = useRef(null);
@@ -326,13 +330,14 @@ const Board = () => {
 
   const onBoardMouseMove = useCallback((e) => {
     const pt = findNearest(e.clientX, e.clientY);
-    if (!pt || loading || (!editing && !isGaming) || (!editing && board[pt[0]][pt[1]] !== 0)) {
+    const canPreview = editing || (isGaming && !loading && !aiTakeOverReady && currentPlayer === humanRole);
+    if (!pt || !canPreview || (!editing && board[pt[0]][pt[1]] !== 0)) {
       if (hover !== null) setHover(null);
       return;
     }
     if (hover && hover[0] === pt[0] && hover[1] === pt[1]) return;
     setHover(pt);
-  }, [findNearest, board, isGaming, loading, hover, editing]);
+  }, [findNearest, board, isGaming, loading, hover, editing, aiTakeOverReady, currentPlayer, humanRole]);
 
   const onBoardMouseLeave = useCallback(() => setHover(null), []);
 
@@ -474,8 +479,8 @@ const Board = () => {
         </div>
       )}
 
-      {/* 摆棋模式下没有 hover preview，因为不需要 */}
-      {!editing && hover && isGaming && !loading && board[hover[0]][hover[1]] === 0 && (
+      {/* 仅人类执子时可预览落点 */}
+      {!editing && hover && isGaming && !loading && !aiTakeOverReady && currentPlayer === humanRole && board[hover[0]][hover[1]] === 0 && (
         <div
           className={currentPlayer === 1 ? 'piece black preview' : 'piece white preview'}
           style={pointStyles[hover[0] * size + hover[1]]}

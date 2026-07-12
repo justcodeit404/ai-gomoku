@@ -178,17 +178,20 @@ export const hint = async (board_size, history, forbiddenEnabled) => {
     y: h.i,
     role: appRoleToEng(h.role),
   }));
-  const opts = toEngineOpts(board_size, 10, 1000, forbiddenEnabled, []);
+  // aiFirst=false: hint 子进程不要 BEGIN 先手;history 走独立参数,opts 里给空数组即可
+  const opts = toEngineOpts(board_size, 10, 1000, forbiddenEnabled, false, []);
   const reply = await engineAPI.hint(opts, engineHistory);
-  if (!reply || typeof reply.x !== 'number') {
+  // IPC wrap 返回 { ok, move: {x,y} }
+  const m = reply?.move || reply;
+  if (!m || typeof m.x !== 'number') {
     throw new Error('Rapfi engine did not return a hint');
   }
-  return engineToApp(reply.x, reply.y);
+  return engineToApp(m.x, m.y);
 };
 
-// 摆棋接管:用 BOARD 命令把当前局面装入主进程引擎,引擎按当前玩家出子。
+// 摆棋接管:把历史装入引擎,等用户走第一手或"AI 接手"按钮触发应手。
 // history: app 格式 [{i, j, role:1|-1}],currentPlayer: 1|-1(下一步该谁走)
-// 返回: { aiMove: {i, j, role} | null, boardSize: number, sentinelPos?: {i,j}, aiTriggerReady?: bool }
+// 返回: { aiMove: null, boardSize, sentinelPos?: {i,j}, aiTriggerReady?: bool }
 export const setupBoard = async (board_size, history, currentPlayer) => {
   const engineAPI = api();
   if (!engineAPI) {
@@ -199,19 +202,11 @@ export const setupBoard = async (board_size, history, currentPlayer) => {
     y: h.i,
     role: appRoleToEng(h.role),
   }));
-  // nextPlayer 用 app role 转 engine role:app 1=黑=engine 1,app -1=白=engine 2
   const nextPlayerEngine = appRoleToEng(currentPlayer);
   const r = await engineAPI.setupBoard(engineHistory, nextPlayerEngine);
-  if (r?.aiMove) {
-    // role 由引擎侧 nextPlayer 决定，而不是硬编码白棋
-    const role = engRoleToApp(nextPlayerEngine);
-    return {
-      aiMove: { i: r.aiMove.y, j: r.aiMove.x, role },
-      boardSize: board_size,
-    };
-  }
-  // nextPlayer=2(AI 接手)时 setupBoard 不立即应手,返回 sentinelPos 让上层在按钮触发后传入。
-  if (r?.aiTriggerReady && r?.sentinelPos) {
+  // setupBoard 当前两个分支都返回 sentinelPos+aiTriggerReady(true) 或 aiMove:null，
+  // 不返回非空 aiMove——把 sentinel 分支单独提出即可。
+  if (r?.sentinelPos) {
     return {
       aiMove: null,
       boardSize: board_size,
@@ -222,9 +217,9 @@ export const setupBoard = async (board_size, history, currentPlayer) => {
   return { aiMove: null, boardSize: board_size };
 };
 
-// 触发"AI 接手"应手:用户点 AI 接手按钮后,后台用哨兵子 TURN 取 AI 应手。
+// 触发"AI 接手"应手:用户点 AI 接手按钮后,后台用哨兵空位 TURN 取 AI 应手。
 // sentinelPos: app 格式 {i, j} —— 由 setupBoard 返回。
-// 返回: { aiMove: {i, j, role} } —— 仅 AI 应手(哨兵/PASS 不入 UI)。
+// 返回: { aiMove: {i, j, role} } —— 仅 AI 应手(哨兵不入 UI)。
 export const triggerAiMoveAfterSetup = async (sentinelPos) => {
   const engineAPI = api();
   if (!engineAPI) {
@@ -237,11 +232,7 @@ export const triggerAiMoveAfterSetup = async (sentinelPos) => {
   if (!r?.aiMove) {
     throw new Error('Rapfi engine did not return an AI move');
   }
-  return {
-    aiMove: {
-      i: r.aiMove.y,
-      j: r.aiMove.x,
-      role: engRoleToApp(r.aiMove.role),
-    },
-  };
+  // rapfi-bridge 已返回 app role(1|-1)与 engine 坐标,与 move() 一致不再二次 engRoleToApp
+  const m = engineToApp(r.aiMove.x, r.aiMove.y);
+  return { aiMove: { ...m, role: r.aiMove.role } };
 };

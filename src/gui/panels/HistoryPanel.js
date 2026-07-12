@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useDispatch, useSelector, shallowEqual } from 'react-redux';
 import { Button, List, Modal, message } from 'antd';
 import { DeleteOutlined } from '@ant-design/icons';
 import { restoreGame } from '../../store/gameSlice';
@@ -16,25 +16,32 @@ function HistoryPanel() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null);
-  const status = useSelector((s) => s.game.status);
+  const { status, timeLimit, showResultModal } = useSelector((s) => ({
+    status: s.game.status,
+    timeLimit: s.game.timeLimit,
+    showResultModal: s.game.showResultModal,
+  }), shallowEqual);
 
   const appAPI = (typeof window !== 'undefined' && window.appAPI) || null;
 
-  useEffect(() => {
-    const load = async () => {
-      if (!appAPI) return;
-      setLoading(true);
-      try {
-        const result = await appAPI.historyList();
-        setRecords(result?.records || []);
-      } catch (e) {
-        message.error('读取历史失败', 2);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+  // 三种触发点刷新列表：mount / 局结束（status IDLE）/ 结算 modal 关闭
+  // （modal 关闭时 historyAdd 已落盘,但此时 status 仍 IDLE,旧依赖漏掉这条）。
+  const reload = useCallback(async () => {
+    if (!appAPI) return;
+    setLoading(true);
+    try {
+      const result = await appAPI.historyList();
+      setRecords(result?.records || []);
+    } catch (e) {
+      message.error('读取历史失败', 2);
+    } finally {
+      setLoading(false);
+    }
   }, [appAPI]);
+
+  useEffect(() => {
+    reload();
+  }, [status, showResultModal, reload]);
 
   const onDelete = async (id, e) => {
     e.stopPropagation();
@@ -54,11 +61,13 @@ function HistoryPanel() {
       role: h.role === 'black' ? 1 : -1,
       elapsedMs: h.elapsedMs || 0,
     }));
+    const tail = history[history.length - 1];
     dispatch(restoreGame({
       board_size: record.size || 15,
       history,
-      currentPlayer: history.length % 2 === 0 ? 1 : -1,
-      timeLimit: 5000,
+      // 下一步 = 末子对手;空棋谱默认黑先
+      currentPlayer: tail ? -tail.role : 1,
+      timeLimit,
       forbiddenEnabled: !!record.forbiddenEnabled,
       aiFirst: !!record.aiFirst,
       triggerAiMove: false,

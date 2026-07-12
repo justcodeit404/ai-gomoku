@@ -40,7 +40,7 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(() => {
-  engineIpc = registerEngineIpc(() => mainWindow);
+  engineIpc = registerEngineIpc();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

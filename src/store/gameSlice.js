@@ -15,13 +15,14 @@ export const startGame = createAsyncThunk('game/start', async ({ board_size, aiF
   return await start(board_size, aiFirst, depth, timeLimit, forbiddenEnabled);
 });
 
-export const restoreGame = createAsyncThunk('game/restore', async ({ board_size, history, currentPlayer, timeLimit, forbiddenEnabled, triggerAiMove }, { dispatch, getState }) => {
-  const aiFirst = getState().game.aiFirst;
+export const restoreGame = createAsyncThunk('game/restore', async ({ board_size, history, currentPlayer, timeLimit, forbiddenEnabled, triggerAiMove, aiFirst: aiFirstArg }, { dispatch, getState }) => {
+  // 优先用调用方传入的 aiFirst(棋谱/快照),否则回退到当前设置
+  const aiFirst = aiFirstArg !== undefined ? !!aiFirstArg : getState().game.aiFirst;
   const data = await restore(board_size, aiFirst, history, currentPlayer, timeLimit, forbiddenEnabled, triggerAiMove);
   if (data?.aiMove) {
     dispatch(applyYixinMove(data.aiMove));
   }
-  return data;
+  return { ...data, aiFirst };
 });
 
 export const movePiece = createAsyncThunk('game/move', async ({ position }, { dispatch, getState }) => {
@@ -63,9 +64,9 @@ const createEmptyBoard = () => Array.from({ length: board_size }, () => Array(bo
 // 提交摆棋结果:用 BOARD 命令把最终局面装入引擎,引擎按下一步该谁走决定是否立即回应。
 // aiFirst 由 store.aiFirst 决定。
 // nextPlayer=1(人接手,黑该走):引擎装入不思考,等用户走第一手 → _moveViaBoard 触发应手。
-// nextPlayer=-1(AI 接手,白该走):引擎装入时不思考(PASS 翻转),返回 sentinelPos 给上层。
+// nextPlayer=-1(AI 接手,白该走):引擎装入不思考,返回 sentinelPos 给上层。
 //   此时 UI 不立即落子,而是显示"AI 接手"按钮,等用户点击后调 triggerAiAfterSetup thunk
-//   用哨兵子 TURN 取 AI 应手(引擎侧 this.history 含 PASS+哨兵+应手,UI 仅含应手)。
+//   用哨兵空位 TURN 取 AI 应手(哨兵不入 UI history)。
 export const commitBoardEdit = createAsyncThunk(
   'game/commitBoardEdit',
   async ({ board, history, currentPlayer }, { getState }) => {
@@ -143,6 +144,9 @@ function resetMatch(state) {
   state.showResultModal = false;
   state.hintMove = null;
   state.editing = false;
+  // 摆棋 AI 接手残留:重开/开局/end 都必须清,否则正常对局会冒出"AI 接手"按钮
+  state.sentinelPos = null;
+  state.aiTakeOverReady = false;
 }
 
 function deductTime(state, role, elapsedMs) {
@@ -161,15 +165,21 @@ function checkLastMoveWinner(board, history) {
   return checkFiveAt(board, last.i, last.j, last.role) ? last.role : null;
 }
 
+// 设置终局四件套：winner / status / winningLine / showResultModal。
+// settleWinner(末位成五) 和 settleWinnerFromBoard(全盘扫) 都调它。
+function setTerminal(state, i, j, role) {
+  state.winner = role;
+  state.status = STATUS.IDLE;
+  state.winningLine = getWinningLine(state.board, i, j, role);
+  state.showResultModal = true;
+}
+
 // 检查最后一步是否获胜，若获胜则设置终局状态并弹出结果弹窗
 function settleWinner(state) {
   const winner = checkLastMoveWinner(state.board, state.history);
   if (winner !== null) {
-    state.winner = winner;
-    state.status = STATUS.IDLE;
     const last = state.history[state.history.length - 1];
-    state.winningLine = getWinningLine(state.board, last.i, last.j, last.role);
-    state.showResultModal = true;
+    setTerminal(state, last.i, last.j, last.role);
   }
 }
 
@@ -194,11 +204,7 @@ function scanWinnerFromBoard(board) {
 // 摆棋专用的胜负结算：全盘扫五，命中即设终局 + 弹窗
 function settleWinnerFromBoard(state) {
   const hit = scanWinnerFromBoard(state.board);
-  if (!hit) return;
-  state.winner = hit.role;
-  state.status = STATUS.IDLE;
-  state.winningLine = getWinningLine(state.board, hit.i, hit.j, hit.role);
-  state.showResultModal = true;
+  if (hit) setTerminal(state, hit.i, hit.j, hit.role);
 }
 
 // 落子并切换当前方；同时结算上一位玩家的用时。
@@ -246,10 +252,6 @@ export const gameSlice = createSlice({
     setHintMove: (state, action) => { state.hintMove = action.payload; },
     clearHint: (state) => { state.hintMove = null; },
     setForbidden: (state, action) => { state.forbiddenEnabled = action.payload; },
-    setEngineError: (state, action) => {
-      state.engine.lastError = action.payload || 'engine error';
-      state.engine.kind = 'unavailable';
-    },
     applyYixinMove: (state, action) => {
       const { i, j, role } = action.payload;
       commitMove(state, role, i, j);
@@ -294,8 +296,10 @@ export const gameSlice = createSlice({
       // 重置双方用时：摆棋另起一局,旧局残量无意义
       state.blackTimeMs = MATCH_BUDGET_MS;
       state.whiteTimeMs = MATCH_BUDGET_MS;
-      // 退出编辑态
+      // 退出编辑态;旧 AI 接手标记清掉,等 commitBoardEdit.fulfilled 再设
       state.editing = false;
+      state.sentinelPos = null;
+      state.aiTakeOverReady = false;
     },
     // 摆棋模式开关
     setEditing: (state, action) => {
@@ -353,6 +357,9 @@ export const gameSlice = createSlice({
       })
       .addCase(restoreGame.fulfilled, (state, action) => {
         applyStart(state, action.payload);
+        if (action.payload?.aiFirst !== undefined) {
+          state.aiFirst = !!action.payload.aiFirst;
+        }
         state.engine.lastError = null;
       })
       .addCase(restoreGame.rejected, (state, action) => {
@@ -394,8 +401,10 @@ export const gameSlice = createSlice({
       .addCase(commitBoardEdit.rejected, (state, action) => {
         state.loading = false;
         state.engine.lastError = action.error?.message || 'board edit commit failed';
-        // 引擎接管失败时,保持编辑态让用户可以重试或取消
+        // 引擎接管失败:回编辑态让用户重试或取消(Board 本地 editBoard 在 commit 时已清空,
+        // 这里只能靠 store.board 展示已 applyBoardEdit 的局面;用户可再点摆棋重进)
         state.editing = false;
+        state.status = STATUS.IDLE;
         state.sentinelPos = null;
         state.aiTakeOverReady = false;
       })
@@ -456,7 +465,7 @@ export const gameSlice = createSlice({
 
 export const {
   tempMove, setAiFirst, setTimeLimit, setForbidden, setShowMoveNumbers, setSoundEnabled, setShowHint, setTheme, setDebug,
-  setEngineError, applyYixinMove, applyYixinUndo, applyBoardEdit,
+  applyYixinMove, applyYixinUndo, applyBoardEdit,
   setHintMove, clearHint, setEditing, syncEditBoard,
   resign, restartGame, closeResultModal,
 } = gameSlice.actions;

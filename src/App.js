@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
+import { useDispatch, useSelector, shallowEqual } from 'react-redux';
 import { message } from 'antd';
 import Board from './gui/board/Board';
 import HeaderBar from './gui/indicators/HeaderBar';
@@ -34,16 +34,19 @@ function EngineErrorToast() {
 
 function KeyboardShortcuts() {
   const dispatch = useDispatch();
-  const { status, loading, aiFirst, timeLimit, forbiddenEnabled, size, history, editing } = useSelector(s => ({
+  // ref 持有最新状态，listener 只绑一次（每次 dispatch 后 useEffect 不再重绑）。
+  // 关键：依赖里只放 [dispatch]，history.length / status 等高频变化不再触发重绑。
+  const stateRef = useRef({});
+  stateRef.current = useSelector((s) => ({
     status: s.game.status,
     loading: s.game.loading,
     aiFirst: s.game.aiFirst,
     timeLimit: s.game.timeLimit,
     forbiddenEnabled: s.game.forbiddenEnabled,
     size: s.game.size,
-    history: s.game.history,
+    historyLen: s.game.history.length,
     editing: s.game.editing,
-  }));
+  }), shallowEqual);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -51,13 +54,14 @@ function KeyboardShortcuts() {
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
 
+      const { status, loading, aiFirst, timeLimit, forbiddenEnabled, size, historyLen, editing } = stateRef.current;
       // 摆棋模式下,Ctrl+Z / Space / Enter 都由 Board 内部处理,这里不抢
       if (editing) return;
 
       // Ctrl/Cmd + Z：悔棋
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
-        if (status === STATUS.GAMING && !loading && history.length >= 2) {
+        if (status === STATUS.GAMING && !loading && historyLen >= 2) {
           dispatch(undoMove());
         }
         return;
@@ -67,7 +71,7 @@ function KeyboardShortcuts() {
       if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault();
         if (status === STATUS.IDLE && !loading) {
-          if (history.length > 0) {
+          if (historyLen > 0) {
             dispatch(restartGame());
           } else {
             dispatch(startGame({
@@ -81,7 +85,7 @@ function KeyboardShortcuts() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [dispatch, status, loading, aiFirst, timeLimit, forbiddenEnabled, size, history, editing]);
+  }, [dispatch]);
 
   return null;
 }

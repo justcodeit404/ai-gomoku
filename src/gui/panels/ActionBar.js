@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useDispatch, useSelector, shallowEqual } from 'react-redux';
-import { Button, Modal, message } from 'antd';
+import { Button, Modal } from 'antd';
 import {
   startGame, undoMove, resign, restartGame, triggerAiAfterSetup,
 } from '../../store/gameSlice';
 import { STATUS } from '../../status';
 import { DEFAULT_DEPTH } from '../../config';
-import { buildGameRecord } from '../../game';
+import { saveGameRecord } from '../../persistence/recordStorage';
 
 function ActionBar() {
   const dispatch = useDispatch();
@@ -44,24 +44,9 @@ function ActionBar() {
     board_size: size, aiFirst, depth: DEFAULT_DEPTH, timeLimit, forbiddenEnabled,
   }));
 
-  const onSaveRecord = async () => {
-    const appAPI = (typeof window !== 'undefined' && window.appAPI) || null;
-    if (!appAPI) {
-      message.error('保存接口不可用', 2);
-      return;
-    }
-    const record = buildGameRecord({
-      size, aiFirst, forbiddenEnabled, history, winner, blackTimeMs, whiteTimeMs,
-    });
-    const defaultName = `棋谱-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
-    try {
-      const result = await appAPI.saveRecord(JSON.stringify(record, null, 2), defaultName);
-      if (result?.canceled) return;
-      message.success('棋谱已保存', 2);
-    } catch (e) {
-      message.error(`保存失败：${e.message}`, 2);
-    }
-  };
+  const onSaveRecord = () => saveGameRecord({
+    size, aiFirst, forbiddenEnabled, history, winner, blackTimeMs, whiteTimeMs,
+  });
 
   return (
     <div className="panel-card">

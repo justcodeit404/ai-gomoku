@@ -17,22 +17,25 @@ const store = configureStore({
   preloadedState,
 });
 
-let lastSettings = {};
+// ponytail: 7 字段原始比对替代 2 次 JSON.stringify,落子/AI 应手每个 action 都跑这
+// 段——200+ 步对局能省 200 次字符串化。
+const SETTINGS_KEYS = [
+  'theme', 'aiFirst', 'timeLimit', 'forbiddenEnabled',
+  'showMoveNumbers', 'soundEnabled', 'showHint',
+];
+const lastSettings = {};
+const initialState = store.getState().game;
+for (const k of SETTINGS_KEYS) lastSettings[k] = initialState[k];
 store.subscribe(() => {
-  const state = store.getState();
-  const settings = {
-    theme: state.game.theme,
-    aiFirst: state.game.aiFirst,
-    timeLimit: state.game.timeLimit,
-    forbiddenEnabled: state.game.forbiddenEnabled,
-    showMoveNumbers: state.game.showMoveNumbers,
-    soundEnabled: state.game.soundEnabled,
-    showHint: state.game.showHint,
-  };
-  if (JSON.stringify(settings) !== JSON.stringify(lastSettings)) {
-    lastSettings = settings;
-    saveSettings(settings);
+  const state = store.getState().game;
+  let dirty = false;
+  for (const k of SETTINGS_KEYS) {
+    if (state[k] !== lastSettings[k]) {
+      lastSettings[k] = state[k];
+      dirty = true;
+    }
   }
+  if (dirty) saveSettings(lastSettings);
 });
 
 export default store;

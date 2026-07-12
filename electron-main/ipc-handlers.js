@@ -1,5 +1,5 @@
 // 注册 IPC 通道：渲染进程 ↔ 主进程 ↔ Rapfi 引擎
-const { ipcMain, dialog, app } = require('electron');
+const { ipcMain, dialog, app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { RapfiBridge } = require('./rapfi-bridge');
@@ -19,7 +19,7 @@ function wrap(fn) {
   };
 }
 
-function registerEngineIpc(getMainWindow) {
+function registerEngineIpc() {
   let bridge = null;
 
   function getHistoryPath() {
@@ -54,23 +54,8 @@ function registerEngineIpc(getMainWindow) {
     if (!binaryPath) {
       throw new Error('Rapfi engine binary not found (looked in release/rapfi/)');
     }
-    bridge = new RapfiBridge({
-      binaryPath,
-      onCrash: (err) => {
-        log.warn('crash:', err.message);
-        sendEvent('crash', { message: err.message });
-      },
-      onForbidden: (payload) => sendEvent('forbid', payload),
-      onMessage: (payload) => sendEvent('message', payload),
-    });
+    bridge = new RapfiBridge({ binaryPath });
     return bridge;
-  }
-
-  function sendEvent(kind, payload) {
-    const win = getMainWindow();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('engine:event', { kind, ...(payload || {}) });
-    }
   }
 
   ipcMain.handle('engine:probe', wrap(async () => {
@@ -88,11 +73,6 @@ function registerEngineIpc(getMainWindow) {
     return { kind: b.engineKind(), firstMove: result?.firstMove || null };
   }));
 
-  ipcMain.handle('engine:begin', wrap(async () => {
-    const b = await ensureBridge();
-    return b.begin();
-  }));
-
   ipcMain.handle('engine:move', wrap(async (_e, { x, y, history } = {}) => {
     const b = await ensureBridge();
     const move = await b.move(x, y, history);
@@ -103,17 +83,6 @@ function registerEngineIpc(getMainWindow) {
     const b = await ensureBridge();
     const popped = await b.undo(steps || 1, history);
     return { popped };
-  }));
-
-  ipcMain.handle('engine:stop', wrap(async () => {
-    const b = await ensureBridge();
-    return b.forceStop();
-  }));
-
-  ipcMain.handle('engine:forbid', wrap(async () => {
-    const b = await ensureBridge();
-    const points = await b.showForbid();
-    return { points };
   }));
 
   ipcMain.handle('engine:hint', wrap(async (_e, { opts, history } = {}) => {
@@ -169,14 +138,18 @@ function registerEngineIpc(getMainWindow) {
   }));
 
   ipcMain.handle('dialog:saveRecord', wrap(async (_e, { content, defaultName } = {}) => {
-    const win = getMainWindow();
-    const result = await dialog.showSaveDialog(win, {
+    // 挂到主窗,避免 Windows 上无 parent 对话框沉到后面
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0] || undefined;
+    const opts = {
       defaultPath: defaultName || '棋谱.json',
       filters: [
         { name: 'JSON 棋谱', extensions: ['json'] },
         { name: '所有文件', extensions: ['*'] },
       ],
-    });
+    };
+    const result = win
+      ? await dialog.showSaveDialog(win, opts)
+      : await dialog.showSaveDialog(opts);
     if (result.canceled || !result.filePath) {
       return { canceled: true };
     }

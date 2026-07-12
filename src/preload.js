@@ -12,27 +12,12 @@ contextBridge.exposeInMainWorld('appAPI', {
 });
 
 contextBridge.exposeInMainWorld('engineAPI', {
-  // 探测引擎可用性 / 二进制位置
   probe: () => invoke('engine:probe'),
-
-  // 引擎控制
   start: (opts) => invoke('engine:start', opts),
-  begin: () => invoke('engine:begin'),
   move: (x, y, history) => invoke('engine:move', { x, y, history }),
   undo: (steps = 1, history) => invoke('engine:undo', { steps, history }),
-  stop: () => invoke('engine:stop'),
-  forbid: () => invoke('engine:forbid'),
   hint: (opts, history) => invoke('engine:hint', { opts, history }),
   setupBoard: (history, nextPlayer) => invoke('engine:setupBoard', { history, nextPlayer }),
   triggerAiMoveAfterSetup: (sentinelPos) => invoke('engine:triggerAiMoveAfterSetup', { sentinelPos }),
   end: () => invoke('engine:end'),
-
-  // 事件订阅（crash / forbid / message），返回取消订阅函数
-  on: (handler) => {
-    const wrap = (_event, payload) => {
-      try { handler(payload); } catch (_) { /* swallow handler errors */ }
-    };
-    ipcRenderer.on('engine:event', wrap);
-    return () => ipcRenderer.removeListener('engine:event', wrap);
-  },
 });
