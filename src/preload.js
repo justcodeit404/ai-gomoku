@@ -20,4 +20,11 @@ contextBridge.exposeInMainWorld('engineAPI', {
   setupBoard: (history, nextPlayer) => invoke('engine:setupBoard', { history, nextPlayer }),
   triggerAiMoveAfterSetup: () => invoke('engine:triggerAiMoveAfterSetup'),
   end: () => invoke('engine:end'),
+  // 搜索中推送 { eval, winRate, depth }；返回取消订阅函数
+  onEval: (handler) => {
+    if (typeof handler !== 'function') return () => {};
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('engine:eval', listener);
+    return () => ipcRenderer.removeListener('engine:eval', listener);
+  },
 });

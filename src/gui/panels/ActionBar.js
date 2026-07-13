@@ -36,8 +36,6 @@ function ActionBar() {
   const canUndo = isGaming && historyLen >= 2 && !loading && !editing;
   const canResign = isGaming && !loading && !editing;
   const canStart = status === STATUS.IDLE && !loading && !editing;
-  // "AI 接手"按钮:摆棋完成且当前该白走(引擎执白),等用户点一下触发引擎应手。
-  // 用高亮 primary 提示用户操作,而不是默认按钮组的一部分。
   const canTriggerAi = isGaming && aiTakeOverReady && !loading && !editing;
 
   const onStart = () => dispatch(startGame({
@@ -49,34 +47,26 @@ function ActionBar() {
   });
 
   return (
-    <div className="panel-card">
-      <div className="panel-card-title">操作</div>
-      <div className="action-stack">
-        {canTriggerAi && (
-          <Button
-            type="primary"
-            size="large"
-            loading={loading}
-            onClick={() => dispatch(triggerAiAfterSetup())}
-          >
-            AI 接手
-          </Button>
-        )}
-        {canStart ? (
-          <Button type="primary" size="large" onClick={onStart}>开始对局</Button>
-        ) : (
-          <div className="action-row">
-            <Button size="large" disabled={!canUndo} onClick={() => setConfirmUndo(true)}>悔棋</Button>
-            <Button size="large" danger disabled={!canResign} onClick={() => setConfirmResign(true)}>认输</Button>
-          </div>
-        )}
-        {status !== STATUS.IDLE && (
-          <Button size="large" disabled={editing} onClick={() => dispatch(restartGame())}>重新开始</Button>
-        )}
-        {historyLen > 0 && (
-          <Button size="large" disabled={editing} onClick={onSaveRecord}>保存棋谱</Button>
-        )}
-      </div>
+    <div className="toolbar-actions">
+      {canTriggerAi && (
+        <Button type="primary" className="btn-cta" loading={loading} onClick={() => dispatch(triggerAiAfterSetup())}>
+          AI 接手
+        </Button>
+      )}
+      {canStart ? (
+        <Button type="primary" className="btn-cta" onClick={onStart}>开始</Button>
+      ) : (
+        <>
+          <Button disabled={!canUndo} onClick={() => setConfirmUndo(true)}>悔棋</Button>
+          <Button danger disabled={!canResign} onClick={() => setConfirmResign(true)}>认输</Button>
+        </>
+      )}
+      {status !== STATUS.IDLE && (
+        <Button disabled={editing} onClick={() => dispatch(restartGame())}>重新开始</Button>
+      )}
+      {historyLen > 0 && (
+        <Button type="text" disabled={editing} onClick={onSaveRecord}>保存棋谱</Button>
+      )}
 
       <Modal
         title="确认悔棋"

@@ -1,137 +1,231 @@
 /* ============================================================
- * Global UI · 墨韵
- * 字体堆栈：Source Han Serif (display) / IBM Plex Sans (body) / IBM Plex Mono (num)
- * 强调色：朱砂红，全局锁死
- * 形状：6px 按钮 / 8px 卡片 / pill 状态
+ * Global UI · Minimal 简约
  * ============================================================ */
 
 @import './tokens.css';
 
-/* ===== 字体本地降级（无网络时也能展示） ===== */
-@font-face {
-  font-family: 'IBM Plex Sans';
-  font-weight: 400 700;
-  font-style: normal;
-  font-display: swap;
-  src: local('PingFang SC'), local('Hiragino Sans GB'), local('Microsoft YaHei');
-}
-@font-face {
-  font-family: 'IBM Plex Mono';
-  font-weight: 400 700;
-  font-style: normal;
-  font-display: swap;
-  src: local('SF Mono'), local('Menlo'), local('Consolas');
-}
-@font-face {
-  font-family: 'Source Han Serif SC';
-  font-weight: 400 700;
-  font-style: normal;
-  font-display: swap;
-  src: local('Songti SC'), local('STSong'), local('SimSun');
-}
-
 /* ============================================================
- * HeaderBar
+ * Header
  * ============================================================ */
-.app-header {
-  display: flex;
+.app-header.hud {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
-  height: 56px;
-  padding: 0 24px;
+  height: 48px;
+  padding: 0 16px;
   background: var(--header-bg);
   border-bottom: 1px solid var(--header-border);
   flex-shrink: 0;
   z-index: 100;
-  font-family: var(--font-body);
+  backdrop-filter: none;
+  box-shadow: none;
 }
 
 .app-header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  justify-self: start;
 }
 
 .app-logo {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--r-card);
-  background:
-    radial-gradient(circle at 32% 28%, #4a4640 0%, #1a1612 65%, #000 100%);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--ink-900);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #f4ede1;
-  font-family: var(--font-display);
+  color: #fafafa;
   font-weight: 700;
-  font-size: 15px;
-  letter-spacing: 0.02em;
-  box-shadow: var(--shadow-1);
+  font-size: 13px;
+  box-shadow: none;
+}
+
+.App.theme-dark .app-logo {
+  background: #fafafa;
+  color: #18181b;
 }
 
 .app-title {
-  font-family: var(--font-display);
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--header-title);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .app-title-sub {
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--app-text-subtle);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  margin-left: 8px;
-  padding-left: 8px;
-  border-left: 1px solid var(--header-border);
+  letter-spacing: 0.08em;
+  font-weight: 500;
 }
 
 .app-header-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
+  justify-self: end;
+}
+
+.hud-center {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-self: center;
+}
+
+.hud-clock {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--app-bg);
+  border: 1px solid var(--header-border);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  transition: border-color var(--dur-base) var(--ease-out-soft),
+              background var(--dur-base) var(--ease-out-soft);
+}
+
+.hud-clock.active {
+  border-color: var(--accent);
+  box-shadow: none;
+  background: color-mix(in srgb, var(--accent) 10%, var(--app-bg));
+}
+
+.hud-clock-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.hud-clock-dot.black {
+  background: #171717;
+  box-shadow: none;
+}
+.hud-clock-dot.white {
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px #a3a3a3;
+}
+
+.hud-clock-label {
+  font-size: 11px;
   color: var(--app-text-muted);
+}
+.hud-clock-time {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--app-text);
+  min-width: 3.2em;
+}
+.hud-clock-count {
+  font-size: 11px;
+  color: var(--app-text-subtle);
+  min-width: 1.2em;
+  text-align: right;
+}
+
+.hud-turn {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--app-text-muted);
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--app-bg);
+  border: 1px solid var(--header-border);
+  min-width: 6.5em;
+  text-align: center;
+}
+
+.hud-turn.thinking {
+  color: var(--accent);
+  border-color: var(--accent);
+  position: relative;
+  overflow: hidden;
+}
+
+/* 思考时顶栏细进度，不盖棋盘、不挤布局 */
+.hud-turn-pulse {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 40%;
+  background: var(--accent);
+  border-radius: 1px;
+  animation: hud-think-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes hud-think-slide {
+  0% { transform: translateX(-20%); opacity: 0.5; }
+  50% { transform: translateX(160%); opacity: 1; }
+  100% { transform: translateX(280%); opacity: 0.5; }
+}
+
+/* AI 胜率胶囊 */
+.hud-winrate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--app-bg);
+  border: 1px solid var(--header-border);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-winrate.live {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--app-bg));
+}
+
+.hud-winrate-label {
+  font-size: 11px;
+  color: var(--app-text-muted);
+  font-weight: 500;
+}
+
+.hud-winrate-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--app-text);
+  min-width: 3.6em;
+}
+
+.hud-icon-btn.ant-btn {
+  color: var(--app-text-muted) !important;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px !important;
+}
+.hud-icon-btn.ant-btn:hover {
+  color: var(--app-text) !important;
+  background: var(--app-bg) !important;
 }
 
 .score-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
-  border-radius: var(--r-pill);
-  background: var(--paper-200);
-  color: var(--ink-700);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--app-bg);
+  color: var(--app-text-muted);
   font-weight: 500;
-  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  border: 1px solid var(--header-border);
 }
-
-.score-pill.black {
-  background: var(--ink-900);
-  color: var(--paper-50);
-}
-
-.score-pill.white {
-  background: var(--paper-50);
-  color: var(--ink-900);
-  border: 1px solid var(--ink-100);
-}
-
-.score-pill-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.score-pill.black .score-pill-dot {
-  background: var(--paper-50);
-}
-
-.score-pill.white .score-pill-dot {
-  background: var(--ink-900);
+.score-pill.edit {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
 
 /* ============================================================
@@ -146,28 +240,28 @@
 .player-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-radius: var(--r-card);
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--app-bg);
+  border: 1px solid transparent;
   transition: border-color var(--dur-base) var(--ease-out-soft),
-              box-shadow var(--dur-base) var(--ease-out-soft),
-              transform var(--dur-fast) var(--ease-out-soft);
+              background var(--dur-base) var(--ease-out-soft);
 }
 
 .player-card.active {
-  border-color: var(--cinnabar);
-  box-shadow: 0 0 0 1px var(--cinnabar), var(--shadow-2);
+  border-color: var(--accent);
+  box-shadow: none;
+  background: color-mix(in srgb, var(--accent) 8%, var(--card-bg));
 }
 
 .player-card.active.black {
-  border-color: var(--ink-900);
-  box-shadow: 0 0 0 1px var(--ink-900), var(--shadow-2);
+  border-color: var(--ink-300);
+  background: var(--app-bg);
 }
 
 .player-card.active.white {
-  border-color: var(--cinnabar);
+  border-color: var(--accent);
 }
 
 .player-avatar {
@@ -207,24 +301,32 @@
 }
 
 .player-role {
-  font-family: var(--font-body);
   font-size: 10px;
   padding: 1px 6px;
-  border-radius: var(--r-pill);
+  border-radius: 4px;
   background: var(--paper-200);
-  color: var(--ink-700);
+  color: var(--app-text-muted);
   font-weight: 500;
-  letter-spacing: 0.04em;
+}
+
+.player-role.human {
+  background: color-mix(in srgb, var(--jade) 15%, transparent);
+  color: var(--jade);
 }
 
 .player-card.active .player-role {
-  background: var(--cinnabar);
-  color: var(--paper-50);
+  background: var(--accent);
+  color: #fff;
 }
 
 .player-card.active.black .player-role {
-  background: var(--ink-900);
-  color: var(--paper-50);
+  background: var(--ink-700);
+  color: #fff;
+}
+
+.player-time.idle {
+  color: var(--app-text-subtle);
+  opacity: 0.7;
 }
 
 .player-time {
@@ -279,8 +381,14 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--cinnabar);
+  background: var(--accent);
   animation: blink 1.2s ease-in-out infinite;
+}
+
+.ai-progress-pct {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--app-text-muted);
 }
 
 @keyframes blink {
@@ -290,9 +398,9 @@
 
 .ai-progress-bar {
   position: relative;
-  height: 2px;
-  background: var(--ink-100);
-  border-radius: var(--r-pill);
+  height: 3px;
+  background: var(--paper-200);
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -300,9 +408,13 @@
   position: absolute;
   inset: 0 auto 0 0;
   width: 0%;
-  background: var(--cinnabar);
-  border-radius: var(--r-pill);
+  background: var(--accent);
+  border-radius: 2px;
   transition: width 200ms linear;
+}
+
+.App.theme-dark .ai-progress-bar {
+  background: #3f3f46;
 }
 
 .ai-progress-bar-fill::after {
@@ -332,10 +444,31 @@
 
 .action-stack .ant-btn {
   width: 100%;
-  height: 38px;
+  height: 40px;
   border-radius: var(--r-button) !important;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.02em;
+  transition: transform var(--dur-fast) var(--ease-out-soft),
+              box-shadow var(--dur-fast) var(--ease-out-soft) !important;
+}
+
+.action-stack .ant-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.action-stack .btn-cta.ant-btn-primary {
+  height: 44px;
+  box-shadow: var(--shadow-1);
+}
+
+.action-stack .btn-ghost.ant-btn {
+  height: 32px;
+  color: var(--app-text-muted);
+}
+
+.action-stack .pulse-cta {
+  animation: none;
+  border-color: var(--accent) !important;
 }
 
 .action-row {
@@ -356,10 +489,17 @@
   gap: 2px;
 }
 
+.settings-embedded .settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 .setting-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 8px 0;
   border-bottom: 1px solid var(--card-border);
   font-family: var(--font-body);
@@ -397,9 +537,13 @@
   align-items: center;
   justify-content: center;
   z-index: 1100;
-  background: rgba(26, 24, 21, 0.32);
-  backdrop-filter: blur(2px);
+  background: rgba(244, 244, 245, 0.65);
+  backdrop-filter: blur(4px);
   animation: fade-in var(--dur-base) var(--ease-out-soft);
+}
+
+.App.theme-dark .result-overlay {
+  background: rgba(24, 24, 27, 0.6);
 }
 
 @keyframes fade-in {
@@ -408,16 +552,17 @@
 }
 
 .result-card {
-  background: var(--paper-50);
-  border-radius: 12px;
+  background: var(--card-bg);
+  border-radius: 16px;
   padding: 32px 36px;
   max-width: 360px;
   width: calc(100% - 40px);
   text-align: center;
-  border: 1px solid var(--ink-100);
+  border: 1px solid var(--card-border);
   box-shadow: var(--shadow-3);
   animation: pop-in var(--dur-slow) var(--ease-out-back);
   pointer-events: auto;
+  color: var(--app-text);
 }
 
 @keyframes pop-in {
@@ -429,22 +574,25 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
-  height: 56px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
-  background: var(--paper-200);
+  background: var(--app-bg);
   margin-bottom: 16px;
   position: relative;
+  border: 1px solid var(--card-border);
 }
 
 .result-mark.win {
-  background: var(--cinnabar);
-  color: var(--paper-50);
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: none;
 }
 
 .result-mark.lose {
-  background: var(--ink-900);
-  color: var(--paper-50);
+  background: var(--app-bg);
+  color: var(--app-text);
 }
 
 .result-mark-text {
@@ -476,7 +624,7 @@
   justify-content: space-around;
   margin-bottom: 20px;
   padding: 14px 0;
-  background: var(--paper-100);
+  background: var(--app-bg);
   border-radius: var(--r-card);
 }
 

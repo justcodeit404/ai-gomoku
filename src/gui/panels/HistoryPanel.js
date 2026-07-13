@@ -11,7 +11,7 @@ function formatTime(iso) {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function HistoryPanel() {
+function HistoryPanel({ embedded = false }) {
   const dispatch = useDispatch();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -75,11 +75,16 @@ function HistoryPanel() {
     setSelected(null);
   };
 
-  if (!appAPI) return null;
+  if (!appAPI) {
+    return <div className="settings-meta">历史记录仅桌面版可用</div>;
+  }
 
   return (
-    <div className="panel-card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <div className="panel-card-title">对局历史</div>
+    <div
+      className={embedded ? 'history-embedded' : 'panel-card'}
+      style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+    >
+      {!embedded && <div className="panel-card-title">对局历史</div>}
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         <List
           size="small"

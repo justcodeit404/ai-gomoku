@@ -51,6 +51,7 @@ declare global {
       sentinelPos: { x: number; y: number },
     ) => Promise<{ ok: boolean; aiMove?: EngineMoveResult; error?: string }>;
     end: () => Promise<{ ok: boolean; error?: string }>;
+    onEval?: (handler: (payload: { eval?: number; winRate?: number; depth?: string | null }) => void) => () => void;
   }
 
   interface AppAPI {

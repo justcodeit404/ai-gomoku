@@ -42,6 +42,14 @@ function registerEngineIpc() {
     await fs.promises.writeFile(p, JSON.stringify(records, null, 2), 'utf8');
   }
 
+  function broadcastEval(payload) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      try {
+        if (!win.isDestroyed()) win.webContents.send('engine:eval', payload);
+      } catch (_) { /* ignore */ }
+    }
+  }
+
   async function ensureBridge() {
     if (bridge?.ready()) return bridge;
     if (bridge) {
@@ -54,7 +62,10 @@ function registerEngineIpc() {
     if (!binaryPath) {
       throw new Error('Rapfi engine binary not found (looked in release/rapfi/)');
     }
-    bridge = new RapfiBridge({ binaryPath });
+    bridge = new RapfiBridge({
+      binaryPath,
+      onEval: (payload) => broadcastEval(payload),
+    });
     return bridge;
   }
 

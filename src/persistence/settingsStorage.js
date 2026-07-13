@@ -1,6 +1,7 @@
 // 用户设置持久化：localStorage（渲染进程可用）
 
-const KEY = 'gobang-settings';
+// v3：简约浅色默认，清掉旧舞台主题缓存
+const KEY = 'gobang-settings-v3';
 
 const PERSISTED_KEYS = [
   'theme',

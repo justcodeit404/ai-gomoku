@@ -21,7 +21,7 @@ function createWindow() {
     minHeight: 680,
     // 等首屏 ready 再显示，避免白屏干等；背景色贴近墨韵主题
     show: false,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#f4f4f5',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

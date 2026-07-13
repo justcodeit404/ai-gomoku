@@ -25,10 +25,20 @@ const GRACE_MS = 5000;
 const STOP_GRACE_MS = 250;
 const STARTUP_GRACE_MS = 1200;
 
+// Rapfi MESSAGE 里的 Eval → 胜率%(0-100)。scale 是经验值，Eval 约 ±200 对应明显优劣。
+function evalToWinRatePct(evalScore) {
+  const x = Number(evalScore);
+  if (!Number.isFinite(x)) return null;
+  const wr = 1 / (1 + Math.exp(-x / 200));
+  return Math.round(wr * 1000) / 10; // 一位小数
+}
+
 class RapfiBridge {
   constructor(opts = {}) {
     this.binaryPath = opts.binaryPath;
     this.onCrash = opts.onCrash || (() => {});
+    // 搜索中解析到 Eval 时回调 { eval, winRate, depth }
+    this.onEval = opts.onEval || (() => {});
 
     this.proc = null;
     this.rl = null;
@@ -56,6 +66,10 @@ class RapfiBridge {
     this._setupNextPlayer = 1;
     // 摆棋首应手后跳过一次防御性同步。
     this._lastMoveFromSetup = false;
+    // 最近一次搜索评估(AI 视角)
+    this.lastEval = null;
+    this.lastWinRate = null;
+    this.lastDepth = null;
   }
 
   // ========================== 公开 API ==========================
@@ -184,7 +198,12 @@ class RapfiBridge {
     this.history.push({ x: rx, y: ry, role: engineReplyRole });
     this.cachedForbid = null;
 
-    return { x: rx, y: ry, role: engRoleToApp(engineReplyRole) };
+    return {
+      x: rx, y: ry, role: engRoleToApp(engineReplyRole),
+      eval: this.lastEval,
+      winRate: this.lastWinRate,
+      depth: this.lastDepth,
+    };
   }
 
   // 用标准 Piskvork BOARD 命令获取当前局面的下一步提示。
@@ -238,7 +257,14 @@ class RapfiBridge {
     this.fromSetup = false;
     this.cachedForbid = null;
     this._lastMoveFromSetup = true;
-    return { aiMove: { x: rx, y: ry, role: engRoleToApp(aiRole) } };
+    return {
+      aiMove: {
+        x: rx, y: ry, role: engRoleToApp(aiRole),
+        eval: this.lastEval,
+        winRate: this.lastWinRate,
+        depth: this.lastDepth,
+      },
+    };
   }
 
   // ===== BOARD 装入 =====
@@ -321,7 +347,12 @@ class RapfiBridge {
     this.fromSetup = false;
     this._lastMoveFromSetup = true;
 
-    return { x: rx, y: ry, role: engRoleToApp(aiRole) };
+    return {
+      x: rx, y: ry, role: engRoleToApp(aiRole),
+      eval: this.lastEval,
+      winRate: this.lastWinRate,
+      depth: this.lastDepth,
+    };
   }
 
   async undo(steps = 1, uiHistory) {
@@ -496,12 +527,30 @@ class RapfiBridge {
         log.warn('parse forbid failed', e.message);
       }
     } else if (line.startsWith('MESSAGE ')) {
-      // Rapfi 的聊天式输出(开局协议、xy 提示等)目前不向渲染端推送,
-      // 留在 log 里供 main 进程日志查阅。
-      log.log('[message]', line.slice(8));
+      const msg = line.slice(8);
+      log.log('[message]', msg);
+      this._maybeParseEval(msg);
     } else {
       log.log('[unmatched]', line);
     }
+  }
+
+  // 解析 Rapfi 搜索输出: "Depth 14-29 | Eval 130 | ..."
+  // Eval 是当前行棋方(AI)的分数；正分≈AI 优势。
+  _maybeParseEval(msg) {
+    const evalM = /Eval\s+(-?\d+(?:\.\d+)?)/i.exec(msg);
+    if (!evalM) return;
+    const score = Number(evalM[1]);
+    if (!Number.isFinite(score)) return;
+    const depthM = /Depth\s+(\d+(?:-\d+)?)/i.exec(msg);
+    const depth = depthM ? depthM[1] : this.lastDepth;
+    const winRate = evalToWinRatePct(score);
+    this.lastEval = score;
+    this.lastWinRate = winRate;
+    this.lastDepth = depth;
+    try {
+      this.onEval({ eval: score, winRate, depth });
+    } catch (_) { /* ignore */ }
   }
 
   // 发一行并期待匹配 expect；返回匹配到的行原文

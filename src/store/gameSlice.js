@@ -102,6 +102,8 @@ export const initialState = {
   winningLine: null,
   showResultModal: false,
   hintMove: null,
+  // AI 评估：winRate 为 AI 视角胜率%(0-100)，来自 Rapfi MESSAGE Eval
+  aiEval: null, // { eval, winRate, depth } | null
   // ---- 用户设置（重开时保留）----
   size: 15,
   aiFirst: true,
@@ -139,6 +141,7 @@ function resetMatch(state) {
   state.winningLine = null;
   state.showResultModal = false;
   state.hintMove = null;
+  state.aiEval = null;
   state.editing = false;
   // 摆棋 AI 接手残留:重开/开局/end 都必须清,否则正常对局会冒出"AI 接手"按钮
   state.sentinelPos = null;
@@ -249,12 +252,30 @@ export const gameSlice = createSlice({
     clearHint: (state) => { state.hintMove = null; },
     setForbidden: (state, action) => { state.forbiddenEnabled = action.payload; },
     applyYixinMove: (state, action) => {
-      const { i, j, role } = action.payload;
+      const { i, j, role, winRate, eval: evalScore, depth } = action.payload;
       commitMove(state, role, i, j);
       state.hintMove = null;
       settleWinner(state);
       state.loading = false;
+      if (winRate != null || evalScore != null) {
+        state.aiEval = {
+          eval: evalScore ?? state.aiEval?.eval ?? null,
+          winRate: winRate ?? state.aiEval?.winRate ?? null,
+          depth: depth ?? state.aiEval?.depth ?? null,
+        };
+      }
     },
+    // 搜索过程中实时更新胜率
+    setAiEval: (state, action) => {
+      const p = action.payload;
+      if (!p || (p.winRate == null && p.eval == null)) return;
+      state.aiEval = {
+        eval: p.eval ?? null,
+        winRate: p.winRate ?? null,
+        depth: p.depth ?? null,
+      };
+    },
+    clearAiEval: (state) => { state.aiEval = null; },
     applyYixinUndo: (state, action) => {
       const n = action.payload?.steps || 2;
       let remaining = n;
@@ -273,6 +294,7 @@ export const gameSlice = createSlice({
       state.status = STATUS.GAMING;
       state.loading = false;
       state.turnStartedAt = Date.now();
+      state.aiEval = null;
     },
     // 摆棋编辑完成：一次性应用 board/history/currentPlayer
     applyBoardEdit: (state, action) => {
@@ -413,9 +435,16 @@ export const gameSlice = createSlice({
         state.sentinelPos = null;
         state.aiTakeOverReady = false;
         if (p.aiMove && state.status === STATUS.GAMING) {
-          const { i, j, role } = p.aiMove;
+          const { i, j, role, winRate, eval: evalScore, depth } = p.aiMove;
           commitMove(state, role, i, j);
           settleWinnerFromBoard(state);
+          if (winRate != null || evalScore != null) {
+            state.aiEval = {
+              eval: evalScore ?? null,
+              winRate: winRate ?? null,
+              depth: depth ?? null,
+            };
+          }
         }
       })
       .addCase(triggerAiAfterSetup.rejected, (state, action) => {
@@ -463,6 +492,7 @@ export const {
   tempMove, setAiFirst, setTimeLimit, setForbidden, setShowMoveNumbers, setSoundEnabled, setShowHint, setTheme, setDebug,
   applyYixinMove, applyYixinUndo, applyBoardEdit,
   setHintMove, clearHint, setEditing, syncEditBoard,
+  setAiEval, clearAiEval,
   resign, restartGame, closeResultModal,
 } = gameSlice.actions;
 export default gameSlice.reducer;

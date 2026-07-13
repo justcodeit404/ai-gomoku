@@ -12,16 +12,18 @@ import './board.css';
 import { STATUS } from '../../status';
 
 const STAR_POINTS_15 = [[3, 3], [3, 11], [11, 3], [11, 11], [7, 7]];
-const PADDING_PX = 44;
+// 与 board.css --board-pad 同步；findNearest 运行时再读 computed 更准
+const BOARD_PAD_FALLBACK = 36;
 
 function usePointStyles(size) {
   return useMemo(() => {
     const styles = [];
     for (let i = 0; i < size; i++) {
       for (let j = 0; j < size; j++) {
+        // 用 CSS 变量，和 .board padding 同一来源，放大棋盘时坐标不漂
         styles.push({
-          left: `calc(${PADDING_PX}px + ${j} * (100% - ${PADDING_PX * 2}px) / ${size - 1})`,
-          top: `calc(${PADDING_PX}px + ${i} * (100% - ${PADDING_PX * 2}px) / ${size - 1})`,
+          left: `calc(var(--board-pad) + ${j} * (100% - 2 * var(--board-pad)) / ${size - 1})`,
+          top: `calc(var(--board-pad) + ${i} * (100% - 2 * var(--board-pad)) / ${size - 1})`,
         });
       }
     }
@@ -292,10 +294,14 @@ const Board = () => {
     const el = boardRef.current;
     if (!el) return null;
     const rect = rectRef.current || el.getBoundingClientRect();
-    const stepX = (rect.width - 2 * PADDING_PX) / (size - 1);
-    const stepY = (rect.height - 2 * PADDING_PX) / (size - 1);
-    const lx = clientX - rect.left - PADDING_PX;
-    const ly = clientY - rect.top - PADDING_PX;
+    const padRaw = getComputedStyle(el).getPropertyValue('--board-pad').trim();
+    const pad = padRaw.endsWith('px')
+      ? parseFloat(padRaw)
+      : (parseFloat(getComputedStyle(el).paddingLeft) || BOARD_PAD_FALLBACK);
+    const stepX = (rect.width - 2 * pad) / (size - 1);
+    const stepY = (rect.height - 2 * pad) / (size - 1);
+    const lx = clientX - rect.left - pad;
+    const ly = clientY - rect.top - pad;
     if (lx < -stepX / 2 || lx > (size - 1) * stepX + stepX / 2) return null;
     if (ly < -stepY / 2 || ly > (size - 1) * stepY + stepY / 2) return null;
     const j = Math.round(lx / stepX);
@@ -495,20 +501,14 @@ const Board = () => {
         />
       )}
 
-      {!editing && loading && (
-        <div className="loading-overlay">
-          <div className="loading-spinner" />
-          <div className="loading-text">AI 思考中…</div>
-        </div>
-      )}
-
-      {/* 摆棋模式：不阻塞正常对弈，提示一个入口按钮 */}
-      {!editing && !loading && (
+      {/* 不在棋盘上盖模糊遮罩：思考状态只在顶栏提示，避免整盘闪一下 */}
+      {!editing && (
         <Button
           className="edit-entry-btn"
           icon={<EditOutlined />}
           onClick={(e) => { e.stopPropagation(); enterEdit(); }}
           size="small"
+          disabled={loading}
         >
           摆棋
         </Button>

@@ -143,7 +143,15 @@ export const move = async (position, history) => {
     throw new Error(r?.error || 'Rapfi engine did not return a move');
   }
   const m = engineToApp(r.move.x, r.move.y);
-  return { yixinDeltaMove: { ...m, role: r.move.role } };
+  return {
+    yixinDeltaMove: {
+      ...m,
+      role: r.move.role,
+      eval: r.move.eval,
+      winRate: r.move.winRate,
+      depth: r.move.depth,
+    },
+  };
 };
 
 export const undo = async (history) => {
@@ -224,5 +232,13 @@ export const triggerAiMoveAfterSetup = async () => {
     throw new Error('Rapfi engine did not return an AI move');
   }
   const m = engineToApp(r.aiMove.x, r.aiMove.y);
-  return { aiMove: { ...m, role: r.aiMove.role } };
+  return {
+    aiMove: {
+      ...m,
+      role: r.aiMove.role,
+      eval: r.aiMove.eval,
+      winRate: r.aiMove.winRate,
+      depth: r.aiMove.depth,
+    },
+  };
 };
