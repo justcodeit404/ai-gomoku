@@ -4,6 +4,7 @@ import { Button, Radio, Space } from 'antd';
 import { EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import {
   movePiece, tempMove, applyBoardEdit, fetchHint, clearHint,
+  setEditing, syncEditBoard, commitBoardEdit, endGame, restoreGame,
 } from '../../store/gameSlice';
 import { isForbidden, buildWalledBoard, coordinate2Position, checkFiveAt } from '../../game';
 import { playMoveSound, playWinSound, setSoundEnabled } from '../audio/sounds';
@@ -11,16 +12,18 @@ import './board.css';
 import { STATUS } from '../../status';
 
 const STAR_POINTS_15 = [[3, 3], [3, 11], [11, 3], [11, 11], [7, 7]];
-const PADDING_PX = 44;
+// 与 board.css --board-pad 同步；findNearest 运行时再读 computed 更准
+const BOARD_PAD_FALLBACK = 36;
 
 function usePointStyles(size) {
   return useMemo(() => {
     const styles = [];
     for (let i = 0; i < size; i++) {
       for (let j = 0; j < size; j++) {
+        // 用 CSS 变量，和 .board padding 同一来源，放大棋盘时坐标不漂
         styles.push({
-          left: `calc(${PADDING_PX}px + ${j} * (100% - ${PADDING_PX * 2}px) / ${size - 1})`,
-          top: `calc(${PADDING_PX}px + ${i} * (100% - ${PADDING_PX * 2}px) / ${size - 1})`,
+          left: `calc(var(--board-pad) + ${j} * (100% - 2 * var(--board-pad)) / ${size - 1})`,
+          top: `calc(var(--board-pad) + ${i} * (100% - 2 * var(--board-pad)) / ${size - 1})`,
         });
       }
     }
@@ -41,13 +44,6 @@ const Intersection = React.memo(function Intersection({ i, j, cell, style, isLas
   );
 });
 
-// 把 history 翻回 board 矩阵
-function boardFromHistory(history, size) {
-  const b = Array.from({ length: size }, () => Array(size).fill(0));
-  for (const h of history) b[h.i][h.j] = h.role;
-  return b;
-}
-
 const Board = () => {
   const dispatch = useDispatch();
   const sel = useSelector((s) => ({
@@ -65,18 +61,22 @@ const Board = () => {
     hintMove: s.game.hintMove,
     size: s.game.size,
     winningLine: s.game.winningLine,
+    editing: s.game.editing,
+    timeLimit: s.game.timeLimit,
+    aiTakeOverReady: s.game.aiTakeOverReady,
   }), shallowEqual);
 
-  const { board, currentPlayer, history, winner, aiFirst, status, loading, forbiddenEnabled, showMoveNumbers, soundEnabled, showHint, hintMove, size, winningLine } = sel;
+  const { board, currentPlayer, history, winner, aiFirst, status, loading, forbiddenEnabled, showMoveNumbers, soundEnabled, showHint, hintMove, size, winningLine, editing, timeLimit, aiTakeOverReady } = sel;
 
   const [hover, setHover] = useState(null);
   const [forbiddenMsg, setForbiddenMsg] = useState(null);
   const forbiddenMsgTimerRef = useRef(null);
 
-  // 摆棋模式状态
-  const [editing, setEditing] = useState(false);
+  // 摆棋模式状态（从 store 读 editing；editBoard/editColor 仍为本地临时态）
   const [editBoard, setEditBoard] = useState(null);
   const [editColor, setEditColor] = useState(1);
+  // 保存进入编辑前的局面，供取消时恢复（含是否曾在对局中，决定恢复后能否继续落子）
+  const preEditRef = useRef(null);
 
   // 同步音效开关
   useEffect(() => {
@@ -126,38 +126,123 @@ const Board = () => {
   const isGaming = status === STATUS.GAMING;
 
   // 编辑模式开关：进入时把当前局面拷到本地；退出/完成时清空
-  const enterEdit = useCallback(() => {
-    const copy = boardFromHistory(history, size);
+  // 对局中进入时需 await endGame()：endGame.fulfilled 会走 resetMatch 把
+  // editing 置 false、board/history 清空，若不 await 会与下面的 setEditing(true)
+  // 产生竞态，导致编辑界面闪一下又被打回空白。
+  const enterEdit = useCallback(async () => {
+    // 阻断:GAMING 进行中 + loading 都不允许进入(已通过 entry 按钮条件拦住,这里再保险)
+    if (status === STATUS.GAMING && loading) return;
+    // 保存当前局面，供取消时恢复；endGame 会清空 history，因此不能依赖它重建 board
+    const snapshotBoard = board.map((row) => row.slice());
+    const snapshotHistory = history.slice();
+    preEditRef.current = {
+      board: snapshotBoard,
+      history: snapshotHistory,
+      wasGaming: status === STATUS.GAMING,
+    };
+    // 阻断:GAMING 中允许进入但需先结束当前对局引擎会话,避免 UI/引擎分叉
+    if (status === STATUS.GAMING) {
+      await dispatch(endGame()); // 等 resetMatch 跑完，再置 editing=true
+    }
+    // 用快照而非闭包里的 board：await 后 store.board 已被 resetMatch 清空，
+    // 但编辑态必须显示进入前的真实局面。
+    const copy = snapshotBoard.map((row) => row.slice());
     setEditBoard(copy);
     setEditColor(1);
-    setEditing(true);
-  }, [history, size]);
+    dispatch(setEditing(true));
+    // 同步初始 editBoard 到 store,让 HeaderBar 立即反映
+    dispatch(syncEditBoard({ board: copy }));
+  }, [status, loading, board, history, dispatch]);
 
   const cancelEdit = useCallback(() => {
-    setEditing(false);
+    const snap = preEditRef.current;
+    dispatch(setEditing(false));
     setEditBoard(null);
-  }, []);
+    // 空闲态进入的编辑：没有对局可恢复，回到空棋盘
+    if (!snap || !snap.wasGaming || !snap.history || snap.history.length === 0) {
+      dispatch(syncEditBoard({ board: Array.from({ length: size }, () => Array(size).fill(0)) }));
+      preEditRef.current = null;
+      return;
+    }
+    // 对局中进入的编辑：用 restoreGame 重建引擎会话并恢复 board/history/currentPlayer，
+    // 恢复后 status=GAMING 可继续落子（applyBoardEdit 只能画棋盘但不能续局）
+    const restoredHistory = snap.history.slice();
+    const tail = restoredHistory[restoredHistory.length - 1];
+    dispatch(restoreGame({
+      board_size: size,
+      history: restoredHistory,
+      currentPlayer: tail ? -tail.role : 1,
+      timeLimit,
+      forbiddenEnabled,
+      triggerAiMove: false,
+    }));
+    preEditRef.current = null;
+  }, [dispatch, size, forbiddenEnabled, timeLimit]);
 
+  // 摆棋完成：按 editColor 起步、黑/白交替构造 history(非按 (i,j) 扫描),
+  // 这样 engine 端 _replayHistory 的"两步一组"TURN 重放能稳定工作。
   const commitEdit = useCallback(() => {
-    // 摆棋完成：构造 history 并 dispatch applyBoardEdit
-    const hist = [];
-    if (editBoard) {
-      for (let i = 0; i < size; i++) {
-        for (let j = 0; j < size; j++) {
-          if (editBoard[i][j] !== 0) hist.push({ i, j, role: editBoard[i][j], elapsedMs: 0 });
-        }
+    if (!editBoard) {
+      dispatch(setEditing(false));
+      return;
+    }
+    // 收集所有黑子和白子
+    const blacks = [];
+    const whites = [];
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        if (editBoard[i][j] === 1) blacks.push({ i, j });
+        else if (editBoard[i][j] === -1) whites.push({ i, j });
       }
     }
-    // 颜色顺序不强制，但 currentPlayer 按"下一步该谁"推导
-    const nextPlayer = hist.length % 2 === 0 ? 1 : -1;
+    // 按自然序排(引擎只关心位置 + 角色,无需真实时间)
+    const byPos = (a, b) => a.i !== b.i ? a.i - b.i : a.j - b.j;
+    blacks.sort(byPos);
+    whites.sort(byPos);
+
+    // 交替合并:editColor=1 -> 黑先;editColor=-1 -> 白先
+    const hist = [];
+    let bIdx = 0, wIdx = 0;
+    let turnRole = editColor;
+    while (bIdx < blacks.length || wIdx < whites.length) {
+      if (turnRole === 1 && bIdx < blacks.length) {
+        const p = blacks[bIdx++];
+        hist.push({ i: p.i, j: p.j, role: 1, elapsedMs: 0 });
+        turnRole = -1;
+      } else if (turnRole === -1 && wIdx < whites.length) {
+        const p = whites[wIdx++];
+        hist.push({ i: p.i, j: p.j, role: -1, elapsedMs: 0 });
+        turnRole = 1;
+      } else if (bIdx < blacks.length) {
+        const p = blacks[bIdx++];
+        hist.push({ i: p.i, j: p.j, role: 1, elapsedMs: 0 });
+        turnRole = -1;
+      } else if (wIdx < whites.length) {
+        const p = whites[wIdx++];
+        hist.push({ i: p.i, j: p.j, role: -1, elapsedMs: 0 });
+        turnRole = 1;
+      } else {
+        break;
+      }
+    }
+    let nextPlayer;
+    if (blacks.length === whites.length) nextPlayer = 1;
+    else if (blacks.length === whites.length + 1) nextPlayer = -1;
+    else nextPlayer = editColor;
+    // 把本地 editBoard 提交到 store(用于重置用时/退出编辑态),
+    // 再由 commitBoardEdit thunk 调 engine restore() 完成引擎接管
     dispatch(applyBoardEdit({
-      board: editBoard || Array.from({ length: size }, () => Array(size).fill(0)),
+      board: editBoard,
       history: hist,
       currentPlayer: nextPlayer,
     }));
-    setEditing(false);
+    dispatch(commitBoardEdit({
+      board: editBoard,
+      history: hist,
+      currentPlayer: nextPlayer,
+    }));
     setEditBoard(null);
-  }, [dispatch, editBoard, size]);
+  }, [dispatch, editBoard, size, editColor]);
 
   // 编辑模式下：点击格子切换颜色
   const onEditCellClick = useCallback((i, j) => {
@@ -169,9 +254,11 @@ const Board = () => {
       } else {
         next[i][j] = editColor;
       }
+      // 同步到 store.board 让 HeaderBar 等组件即时反映
+      dispatch(syncEditBoard({ board: next }));
       return next;
     });
-  }, [editColor]);
+  }, [editColor, dispatch]);
 
   const onIntersectionClick = useCallback((i, j) => {
     if (editing) {
@@ -179,6 +266,8 @@ const Board = () => {
       return;
     }
     if (loading || !isGaming) return;
+    // 只允许人类执子时落子;AI 接手等待中禁止点盘
+    if (aiTakeOverReady || currentPlayer !== humanRole) return;
     if (board[i][j] !== 0) return;
     if (forbiddenEnabled && currentPlayer === 1) {
       const evalBoard = buildWalledBoard(board, size);
@@ -196,7 +285,7 @@ const Board = () => {
       return;
     }
     dispatch(movePiece({ position: [i, j] }));
-  }, [editing, onEditCellClick, loading, isGaming, board, forbiddenEnabled, currentPlayer, size, dispatch]);
+  }, [editing, onEditCellClick, loading, isGaming, aiTakeOverReady, humanRole, board, forbiddenEnabled, currentPlayer, size, dispatch]);
 
   const boardRef = useRef(null);
   const rectRef = useRef(null);
@@ -205,10 +294,14 @@ const Board = () => {
     const el = boardRef.current;
     if (!el) return null;
     const rect = rectRef.current || el.getBoundingClientRect();
-    const stepX = (rect.width - 2 * PADDING_PX) / (size - 1);
-    const stepY = (rect.height - 2 * PADDING_PX) / (size - 1);
-    const lx = clientX - rect.left - PADDING_PX;
-    const ly = clientY - rect.top - PADDING_PX;
+    const padRaw = getComputedStyle(el).getPropertyValue('--board-pad').trim();
+    const pad = padRaw.endsWith('px')
+      ? parseFloat(padRaw)
+      : (parseFloat(getComputedStyle(el).paddingLeft) || BOARD_PAD_FALLBACK);
+    const stepX = (rect.width - 2 * pad) / (size - 1);
+    const stepY = (rect.height - 2 * pad) / (size - 1);
+    const lx = clientX - rect.left - pad;
+    const ly = clientY - rect.top - pad;
     if (lx < -stepX / 2 || lx > (size - 1) * stepX + stepX / 2) return null;
     if (ly < -stepY / 2 || ly > (size - 1) * stepY + stepY / 2) return null;
     const j = Math.round(lx / stepX);
@@ -243,13 +336,14 @@ const Board = () => {
 
   const onBoardMouseMove = useCallback((e) => {
     const pt = findNearest(e.clientX, e.clientY);
-    if (!pt || loading || (!editing && !isGaming) || (!editing && board[pt[0]][pt[1]] !== 0)) {
+    const canPreview = editing || (isGaming && !loading && !aiTakeOverReady && currentPlayer === humanRole);
+    if (!pt || !canPreview || (!editing && board[pt[0]][pt[1]] !== 0)) {
       if (hover !== null) setHover(null);
       return;
     }
     if (hover && hover[0] === pt[0] && hover[1] === pt[1]) return;
     setHover(pt);
-  }, [findNearest, board, isGaming, loading, hover, editing]);
+  }, [findNearest, board, isGaming, loading, hover, editing, aiTakeOverReady, currentPlayer, humanRole]);
 
   const onBoardMouseLeave = useCallback(() => setHover(null), []);
 
@@ -324,8 +418,8 @@ const Board = () => {
             y1={winningLine[0][0]}
             x2={winningLine[winningLine.length - 1][1]}
             y2={winningLine[winningLine.length - 1][0]}
-            stroke="#e74c3c"
-            strokeWidth="0.12"
+            stroke="var(--cinnabar)"
+            strokeWidth="0.18"
             strokeLinecap="round"
           />
         </svg>
@@ -344,7 +438,7 @@ const Board = () => {
         </React.Fragment>
       ))}
 
-      {stars.map(([i, j]) => (
+      {!editing && stars.map(([i, j]) => (
         <div key={`star-${i}-${j}`} className="star-point" style={pointStyles[i * size + j]} />
       ))}
 
@@ -370,20 +464,20 @@ const Board = () => {
 
       {/* 摆棋模式：上方工具栏 */}
       {editing && (
-        <div className="edit-toolbar">
+        <div className="edit-toolbar" onClick={(e) => e.stopPropagation()}>
           <Space>
             <span style={{ color: '#fff' }}>摆棋中：</span>
             <Radio.Group value={editColor} onChange={(e) => setEditColor(e.target.value)} buttonStyle="solid" size="small">
               <Radio.Button value={1}>黑</Radio.Button>
               <Radio.Button value={-1}>白</Radio.Button>
             </Radio.Group>
-            <Button size="small" icon={<DeleteOutlined />} onClick={() => setEditBoard(Array.from({ length: size }, () => Array(size).fill(0)))}>
+            <Button size="small" icon={<DeleteOutlined />} onClick={(e) => { e.stopPropagation(); const empty = Array.from({ length: size }, () => Array(size).fill(0)); setEditBoard(empty); dispatch(syncEditBoard({ board: empty })); }}>
               清空
             </Button>
-            <Button size="small" type="primary" icon={<CheckOutlined />} onClick={commitEdit}>
+            <Button size="small" type="primary" icon={<CheckOutlined />} onClick={(e) => { e.stopPropagation(); commitEdit(); }}>
               完成
             </Button>
-            <Button size="small" icon={<CloseOutlined />} onClick={cancelEdit}>
+            <Button size="small" icon={<CloseOutlined />} onClick={(e) => { e.stopPropagation(); cancelEdit(); }}>
               取消
             </Button>
           </Space>
@@ -391,8 +485,8 @@ const Board = () => {
         </div>
       )}
 
-      {/* 摆棋模式下没有 hover preview，因为不需要 */}
-      {!editing && hover && isGaming && !loading && board[hover[0]][hover[1]] === 0 && (
+      {/* 仅人类执子时可预览落点 */}
+      {!editing && hover && isGaming && !loading && !aiTakeOverReady && currentPlayer === humanRole && board[hover[0]][hover[1]] === 0 && (
         <div
           className={currentPlayer === 1 ? 'piece black preview' : 'piece white preview'}
           style={pointStyles[hover[0] * size + hover[1]]}
@@ -407,20 +501,14 @@ const Board = () => {
         />
       )}
 
-      {loading && (
-        <div className="loading-overlay">
-          <div className="loading-spinner" />
-          <div className="loading-text">AI 思考中…</div>
-        </div>
-      )}
-
-      {/* 摆棋模式：不阻塞正常对弈，提示一个入口按钮 */}
-      {!editing && !loading && (
+      {/* 不在棋盘上盖模糊遮罩：思考状态只在顶栏提示，避免整盘闪一下 */}
+      {!editing && (
         <Button
           className="edit-entry-btn"
           icon={<EditOutlined />}
-          onClick={enterEdit}
+          onClick={(e) => { e.stopPropagation(); enterEdit(); }}
           size="small"
+          disabled={loading}
         >
           摆棋
         </Button>

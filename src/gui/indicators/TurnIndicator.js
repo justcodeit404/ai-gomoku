@@ -11,7 +11,7 @@ function PlayerCard({ role, name, timeMs, isActive, isHuman, isIdle }) {
         <div className="player-name">
           {name}
           {isActive && <span className="player-role">轮到</span>}
-          {isHuman && <span className="player-role" style={{ background: 'rgba(0,0,0,0.06)', color: '#666' }}>人类</span>}
+          {isHuman && <span className="player-role human">你</span>}
         </div>
         <TimeClock timeMs={timeMs} isActive={isActive} isIdle={isIdle} />
       </div>
@@ -29,12 +29,12 @@ function TurnIndicator() {
 
   const isGaming = status === STATUS.GAMING;
   const isIdle = status === STATUS.IDLE;
-  const blackName = aiFirst ? 'AI · 黑' : '你 · 黑';
-  const whiteName = aiFirst ? '你 · 白' : 'AI · 白';
+  const blackName = aiFirst ? 'AI' : '你';
+  const whiteName = aiFirst ? '你' : 'AI';
 
   return (
-    <div className="panel-card">
-      <div className="panel-card-title">对局状态</div>
+    <div className="panel-card combat-status">
+      <div className="panel-card-title">对局</div>
       <div className="player-list">
         <PlayerCard
           role={1} name={blackName} timeMs={black}

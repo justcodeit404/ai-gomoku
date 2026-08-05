@@ -143,7 +143,15 @@ export const move = async (position, history) => {
     throw new Error(r?.error || 'Rapfi engine did not return a move');
   }
   const m = engineToApp(r.move.x, r.move.y);
-  return { yixinDeltaMove: { ...m, role: r.move.role } };
+  return {
+    yixinDeltaMove: {
+      ...m,
+      role: r.move.role,
+      eval: r.move.eval,
+      winRate: r.move.winRate,
+      depth: r.move.depth,
+    },
+  };
 };
 
 export const undo = async (history) => {
@@ -167,8 +175,9 @@ export const end = async () => {
   return { ok: true };
 };
 
-// 获取当前局面的 AI 提示着法（不写入真实对局）。
-export const hint = async (board_size, history, forbiddenEnabled) => {
+// 获取当前局面的提示着法（不写入真实对局）。
+// currentPlayer: app 1|-1,提示该谁走就以谁为 BOARD 的"己方"。
+export const hint = async (board_size, history, forbiddenEnabled, currentPlayer = 1) => {
   const engineAPI = api();
   if (!engineAPI) {
     throw new Error('Rapfi engine API not available');
@@ -178,10 +187,58 @@ export const hint = async (board_size, history, forbiddenEnabled) => {
     y: h.i,
     role: appRoleToEng(h.role),
   }));
-  const opts = toEngineOpts(board_size, 10, 1000, forbiddenEnabled, []);
-  const reply = await engineAPI.hint(opts, engineHistory);
-  if (!reply || typeof reply.x !== 'number') {
+  const selfRole = appRoleToEng(currentPlayer);
+  // aiFirst=false: hint 子进程不要 BEGIN;selfRole 单独传给 BOARD 相对色映射
+  const opts = toEngineOpts(board_size, 10, 1000, forbiddenEnabled, false, []);
+  const reply = await engineAPI.hint(opts, engineHistory, selfRole);
+  // IPC wrap 返回 { ok, move: {x,y} }
+  const m = reply?.move || reply;
+  if (!m || typeof m.x !== 'number') {
     throw new Error('Rapfi engine did not return a hint');
   }
-  return engineToApp(reply.x, reply.y);
+  return engineToApp(m.x, m.y);
+};
+
+// 摆棋接管:标记 fromSetup,等用户走第一手或"AI 接手"按钮再 BOARD 应手。
+// history: app 格式 [{i, j, role:1|-1}],currentPlayer: 1|-1(下一步该谁走)
+// 返回: { aiMove: null, boardSize, aiTriggerReady?: bool }
+export const setupBoard = async (board_size, history, currentPlayer) => {
+  const engineAPI = api();
+  if (!engineAPI) {
+    throw new Error('Rapfi engine API not available');
+  }
+  const engineHistory = (history || []).map((h) => ({
+    x: h.j,
+    y: h.i,
+    role: appRoleToEng(h.role),
+  }));
+  const nextPlayerEngine = appRoleToEng(currentPlayer);
+  const r = await engineAPI.setupBoard(engineHistory, nextPlayerEngine);
+  if (r?.aiTriggerReady) {
+    return { aiMove: null, boardSize: board_size, aiTriggerReady: true };
+  }
+  return { aiMove: null, boardSize: board_size };
+};
+
+// 触发"AI 接手":BOARD 相对色(AI 白=己方)装入后立即应手。
+// 返回: { aiMove: {i, j, role} }
+export const triggerAiMoveAfterSetup = async () => {
+  const engineAPI = api();
+  if (!engineAPI) {
+    throw new Error('Rapfi engine API not available');
+  }
+  const r = await engineAPI.triggerAiMoveAfterSetup();
+  if (!r?.aiMove) {
+    throw new Error('Rapfi engine did not return an AI move');
+  }
+  const m = engineToApp(r.aiMove.x, r.aiMove.y);
+  return {
+    aiMove: {
+      ...m,
+      role: r.aiMove.role,
+      eval: r.aiMove.eval,
+      winRate: r.aiMove.winRate,
+      depth: r.aiMove.depth,
+    },
+  };
 };

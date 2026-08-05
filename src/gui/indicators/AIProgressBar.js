@@ -2,9 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSelector, shallowEqual } from 'react-redux';
 import { engineKindLabel } from './engine-label';
 
-// 采样间隔放宽到 500ms：CSS transition (200ms) 已负责丝滑过渡，
-// JS 端无需 10Hz 刷新。
-const TICK_MS = 500;
+const TICK_MS = 200;
 
 function AIProgressBar() {
   const { loading, timeLimit, engineKind } = useSelector(s => ({
@@ -28,20 +26,15 @@ function AIProgressBar() {
   if (!loading) return null;
 
   return (
-    <div className="panel-card">
-      <div className="panel-card-title">AI 思考</div>
-      <div className="ai-progress">
-        <div className="ai-progress-meta">
-          <span className="ai-progress-engine">
-            <span className="dot" />
-            {engineKindLabel(engineKind)}
-          </span>
-          <span>{Math.round(pct)}%</span>
-        </div>
-        <div className="ai-progress-bar">
-          <div className="ai-progress-bar-fill" style={{ width: `${pct}%` }} />
-        </div>
+    <div className="ai-strip" role="status" aria-live="polite">
+      <span className="ai-strip-label">
+        <span className="dot" />
+        {engineKindLabel(engineKind)} 思考中
+      </span>
+      <div className="ai-strip-bar">
+        <div className="ai-strip-fill" style={{ width: `${pct}%` }} />
       </div>
+      <span className="ai-strip-pct">{Math.round(pct)}%</span>
     </div>
   );
 }

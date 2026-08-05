@@ -1,18 +1,18 @@
 import React, { useState } from 'react';
 import { useDispatch, useSelector, shallowEqual } from 'react-redux';
-import { Button, Modal, message } from 'antd';
+import { Button, Modal } from 'antd';
 import {
-  startGame, undoMove, resign, restartGame,
+  startGame, undoMove, resign, restartGame, triggerAiAfterSetup,
 } from '../../store/gameSlice';
 import { STATUS } from '../../status';
 import { DEFAULT_DEPTH } from '../../config';
-import { buildGameRecord } from '../../game';
+import { saveGameRecord } from '../../persistence/recordStorage';
 
 function ActionBar() {
   const dispatch = useDispatch();
   const {
     status, loading, aiFirst, timeLimit, forbiddenEnabled, size, history, winner,
-    blackTimeMs, whiteTimeMs,
+    blackTimeMs, whiteTimeMs, editing, aiTakeOverReady,
   } = useSelector(s => ({
     status: s.game.status,
     loading: s.game.loading,
@@ -24,6 +24,8 @@ function ActionBar() {
     winner: s.game.winner,
     blackTimeMs: s.game.blackTimeMs,
     whiteTimeMs: s.game.whiteTimeMs,
+    editing: s.game.editing,
+    aiTakeOverReady: s.game.aiTakeOverReady,
   }), shallowEqual);
   const historyLen = history.length;
 
@@ -31,52 +33,40 @@ function ActionBar() {
   const [confirmResign, setConfirmResign] = useState(false);
 
   const isGaming = status === STATUS.GAMING;
-  const canUndo = isGaming && historyLen >= 2 && !loading;
-  const canResign = isGaming && !loading;
-  const canStart = status === STATUS.IDLE && !loading;
+  const canUndo = isGaming && historyLen >= 2 && !loading && !editing;
+  const canResign = isGaming && !loading && !editing;
+  const canStart = status === STATUS.IDLE && !loading && !editing;
+  const canTriggerAi = isGaming && aiTakeOverReady && !loading && !editing;
 
   const onStart = () => dispatch(startGame({
     board_size: size, aiFirst, depth: DEFAULT_DEPTH, timeLimit, forbiddenEnabled,
   }));
 
-  const onSaveRecord = async () => {
-    const appAPI = (typeof window !== 'undefined' && window.appAPI) || null;
-    if (!appAPI) {
-      message.error('保存接口不可用', 2);
-      return;
-    }
-    const record = buildGameRecord({
-      size, aiFirst, forbiddenEnabled, history, winner, blackTimeMs, whiteTimeMs,
-    });
-    const defaultName = `棋谱-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
-    try {
-      const result = await appAPI.saveRecord(JSON.stringify(record, null, 2), defaultName);
-      if (result?.canceled) return;
-      message.success('棋谱已保存', 2);
-    } catch (e) {
-      message.error(`保存失败：${e.message}`, 2);
-    }
-  };
+  const onSaveRecord = () => saveGameRecord({
+    size, aiFirst, forbiddenEnabled, history, winner, blackTimeMs, whiteTimeMs,
+  });
 
   return (
-    <div className="panel-card">
-      <div className="panel-card-title">操作</div>
-      <div className="action-stack">
-        {canStart ? (
-          <Button type="primary" size="large" onClick={onStart}>开始对局</Button>
-        ) : (
-          <div className="action-row">
-            <Button size="large" disabled={!canUndo} onClick={() => setConfirmUndo(true)}>悔棋</Button>
-            <Button size="large" danger disabled={!canResign} onClick={() => setConfirmResign(true)}>认输</Button>
-          </div>
-        )}
-        {status !== STATUS.IDLE && (
-          <Button size="large" onClick={() => dispatch(restartGame())}>重新开始</Button>
-        )}
-        {historyLen > 0 && (
-          <Button size="large" onClick={onSaveRecord}>保存棋谱</Button>
-        )}
-      </div>
+    <div className="toolbar-actions">
+      {canTriggerAi && (
+        <Button type="primary" className="btn-cta" loading={loading} onClick={() => dispatch(triggerAiAfterSetup())}>
+          AI 接手
+        </Button>
+      )}
+      {canStart ? (
+        <Button type="primary" className="btn-cta" onClick={onStart}>开始</Button>
+      ) : (
+        <>
+          <Button disabled={!canUndo} onClick={() => setConfirmUndo(true)}>悔棋</Button>
+          <Button danger disabled={!canResign} onClick={() => setConfirmResign(true)}>认输</Button>
+        </>
+      )}
+      {status !== STATUS.IDLE && (
+        <Button disabled={editing} onClick={() => dispatch(restartGame())}>重新开始</Button>
+      )}
+      {historyLen > 0 && (
+        <Button type="text" disabled={editing} onClick={onSaveRecord}>保存棋谱</Button>
+      )}
 
       <Modal
         title="确认悔棋"

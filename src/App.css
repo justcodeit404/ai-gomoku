@@ -1,4 +1,6 @@
-/* 全局基础：固定视口，禁止页面滚动 */
+/* ============================================================
+ * Minimal · 顶栏状态 + 大棋盘 + 单行底栏按钮（去重、减压）
+ * ============================================================ */
 
 html, body, #root {
   margin: 0;
@@ -6,101 +8,291 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-               'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  color: var(--app-text, #222);
+  font-family: var(--font-body);
+  color: var(--app-text);
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background: var(--app-bg, #f4f6f8);
+  background: var(--app-bg);
 }
 
-* {
-  box-sizing: border-box;
+body::before,
+body::after {
+  display: none;
 }
 
-button {
-  font-family: inherit;
-}
+* { box-sizing: border-box; }
+button { font-family: inherit; }
 
-/* ===== 顶层布局 ===== */
 .App {
+  position: relative;
+  z-index: 2;
   height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* 顶栏 48 + 底栏 ~52；设置轨宽度单独扣 */
+  --chrome-h: 104px;
+  --settings-w: 240px;
+  background: var(--app-bg);
 }
 
 .app-body {
   flex: 1;
   display: flex;
+  flex-direction: row;
+  min-height: 0;
+  background: var(--app-bg);
+}
+
+/* 左侧：棋盘 + 底栏 */
+.main-column {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 
-/* 棋盘区域：剩余空间全部给棋盘，内容居中 */
 .board-area {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 10px;
+  padding: 6px 8px 4px;
   position: relative;
+  container-type: size;
+  background: var(--app-bg);
 }
 
-/* 右侧边栏：固定宽度，所有控制/设置都在这里 */
-.side-panel {
-  width: 260px;
-  flex-shrink: 0;
+.board-stage {
+  position: relative;
+  /* 扣掉设置侧栏宽度，再取短边做正方形 */
+  width: min(100cqmin, calc(100vh - var(--chrome-h, 104px)), calc(100vw - var(--settings-w) - 20px));
+  height: min(100cqmin, calc(100vh - var(--chrome-h, 104px)), calc(100vw - var(--settings-w) - 20px));
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: var(--shadow-board);
+}
+
+/* 右侧：设置常驻，不再进抽屉 */
+.settings-rail {
+  flex: 0 0 var(--settings-w);
+  width: var(--settings-w);
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px;
-  background: var(--side-bg, #fff);
-  border-left: 1px solid var(--side-border, rgba(0, 0, 0, 0.06));
-  overflow-y: auto;
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.03);
+  min-height: 0;
+  border-left: 1px solid var(--side-border);
+  background: var(--side-bg);
 }
 
-/* 侧边栏里的卡片块 */
+.settings-rail-title {
+  flex: 0 0 auto;
+  padding: 12px 14px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-text);
+  border-bottom: 1px solid var(--side-border);
+}
+
+.settings-rail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 12px 12px;
+}
+
+.settings-rail-body .settings-embedded .setting-row {
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.settings-rail-body .settings-embedded .setting-row > .ant-select {
+  min-width: 96px;
+}
+
+.settings-rail-body .debug-panel {
+  margin-top: 12px;
+}
+
+/* 单行底栏：只放操作按钮 */
+.toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 6px 12px 8px;
+  background: var(--side-bg);
+  border-top: 1px solid var(--side-border);
+}
+
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.toolbar-actions .ant-btn {
+  height: 34px !important;
+  min-width: 72px;
+  padding: 0 14px !important;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+  box-shadow: none !important;
+}
+
+.toolbar-actions .btn-cta.ant-btn-primary {
+  min-width: 96px;
+  height: 36px !important;
+  font-weight: 600 !important;
+}
+
+/* AI 思考：贴在底栏上方的细条，不占三栏布局 */
+.ai-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 16px;
+  background: var(--side-bg);
+  border-top: 1px solid var(--side-border);
+  font-size: 12px;
+  color: var(--app-text-muted);
+}
+
+.ai-strip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.ai-strip-label .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: blink 1.2s ease-in-out infinite;
+}
+
+.ai-strip-bar {
+  flex: 1;
+  height: 3px;
+  background: var(--paper-200);
+  border-radius: 2px;
+  overflow: hidden;
+  max-width: 360px;
+}
+
+.App.theme-dark .ai-strip-bar {
+  background: #3f3f46;
+}
+
+.ai-strip-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 200ms linear;
+}
+
+.ai-strip-pct {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5em;
+  text-align: right;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* 空闲提示 */
+.idle-banner {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+  background: rgba(244, 244, 245, 0.5);
+  border-radius: 4px;
+}
+
+.App.theme-dark .idle-banner {
+  background: rgba(24, 24, 27, 0.45);
+}
+
+.idle-banner .idle-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--app-text);
+}
+
+.idle-banner .idle-sub {
+  font-size: 13px;
+  color: var(--app-text-muted);
+}
+
+.idle-banner .idle-cta {
+  pointer-events: auto;
+  margin-top: 4px;
+  height: 36px !important;
+  min-width: 120px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
 .panel-card {
-  background: var(--card-bg, #fafafa);
-  border: 1px solid var(--card-border, rgba(0, 0, 0, 0.05));
-  border-radius: 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--r-card);
   padding: 14px;
 }
 
 .panel-card-title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #999;
+  color: var(--app-text-muted);
   margin-bottom: 10px;
 }
 
-/* 响应式：小屏把侧边栏收到下面（仍保证不滚动，改用抽屉还是折叠视情况） */
-@media (max-width: 800px) {
-  .side-panel {
-    width: 260px;
-  }
+.drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  min-height: 0;
 }
 
-@media (max-width: 680px) {
-  .app-body {
-    flex-direction: column;
-  }
-  .side-panel {
-    width: 100%;
-    height: auto;
-    max-height: 38vh;
-    border-left: none;
-    border-top: 1px solid var(--side-border, rgba(0, 0, 0, 0.06));
-    flex-direction: row;
-    flex-wrap: wrap;
-    overflow-y: auto;
-  }
-  .panel-card {
-    flex: 1;
-    min-width: 160px;
+.drawer-body .history-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useDispatch, useSelector, shallowEqual } from 'react-redux';
 import { Button, List, Modal, message } from 'antd';
 import { DeleteOutlined } from '@ant-design/icons';
 import { restoreGame } from '../../store/gameSlice';
@@ -11,30 +11,37 @@ function formatTime(iso) {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function HistoryPanel() {
+function HistoryPanel({ embedded = false }) {
   const dispatch = useDispatch();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null);
-  const status = useSelector((s) => s.game.status);
+  const { status, timeLimit, showResultModal } = useSelector((s) => ({
+    status: s.game.status,
+    timeLimit: s.game.timeLimit,
+    showResultModal: s.game.showResultModal,
+  }), shallowEqual);
 
   const appAPI = (typeof window !== 'undefined' && window.appAPI) || null;
 
-  useEffect(() => {
-    const load = async () => {
-      if (!appAPI) return;
-      setLoading(true);
-      try {
-        const result = await appAPI.historyList();
-        setRecords(result?.records || []);
-      } catch (e) {
-        message.error('读取历史失败', 2);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+  // 三种触发点刷新列表：mount / 局结束（status IDLE）/ 结算 modal 关闭
+  // （modal 关闭时 historyAdd 已落盘,但此时 status 仍 IDLE,旧依赖漏掉这条）。
+  const reload = useCallback(async () => {
+    if (!appAPI) return;
+    setLoading(true);
+    try {
+      const result = await appAPI.historyList();
+      setRecords(result?.records || []);
+    } catch (e) {
+      message.error('读取历史失败', 2);
+    } finally {
+      setLoading(false);
+    }
   }, [appAPI]);
+
+  useEffect(() => {
+    reload();
+  }, [status, showResultModal, reload]);
 
   const onDelete = async (id, e) => {
     e.stopPropagation();
@@ -54,11 +61,13 @@ function HistoryPanel() {
       role: h.role === 'black' ? 1 : -1,
       elapsedMs: h.elapsedMs || 0,
     }));
+    const tail = history[history.length - 1];
     dispatch(restoreGame({
       board_size: record.size || 15,
       history,
-      currentPlayer: history.length % 2 === 0 ? 1 : -1,
-      timeLimit: 5000,
+      // 下一步 = 末子对手;空棋谱默认黑先
+      currentPlayer: tail ? -tail.role : 1,
+      timeLimit,
       forbiddenEnabled: !!record.forbiddenEnabled,
       aiFirst: !!record.aiFirst,
       triggerAiMove: false,
@@ -66,11 +75,16 @@ function HistoryPanel() {
     setSelected(null);
   };
 
-  if (!appAPI) return null;
+  if (!appAPI) {
+    return <div className="settings-meta">历史记录仅桌面版可用</div>;
+  }
 
   return (
-    <div className="panel-card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <div className="panel-card-title">对局历史</div>
+    <div
+      className={embedded ? 'history-embedded' : 'panel-card'}
+      style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+    >
+      {!embedded && <div className="panel-card-title">对局历史</div>}
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         <List
           size="small"
@@ -87,12 +101,12 @@ function HistoryPanel() {
             >
               <List.Item.Meta
                 title={
-                  <span style={{ fontSize: 12 }}>
+                  <span className="history-item-meta">
                     {formatTime(item.savedAt)} · {item.size || 15}路 · {item.history?.length || 0}步
                   </span>
                 }
                 description={
-                  <span style={{ fontSize: 11, color: '#888' }}>
+                  <span className="history-item-result">
                     {item.winner === 1 ? '黑胜' : item.winner === -1 ? '白胜' : '未分胜负'}
                   </span>
                 }

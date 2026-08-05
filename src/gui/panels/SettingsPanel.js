@@ -2,16 +2,15 @@ import React from 'react';
 import { useDispatch, useSelector, shallowEqual } from 'react-redux';
 import { Switch, Select } from 'antd';
 import {
-  setAiFirst, setTimeLimit, setForbidden, setShowMoveNumbers, setSoundEnabled, setShowHint, setTheme, setDebug,
+  setAiFirst, setForbidden, setShowMoveNumbers, setSoundEnabled, setShowHint, setTheme, setDebug,
 } from '../../store/gameSlice';
 import { engineKindLabel } from '../indicators/engine-label';
 import { STATUS } from '../../status';
 
-function SettingsPanel() {
+function SettingsPanel({ embedded = false }) {
   const dispatch = useDispatch();
   const data = useSelector(s => ({
     aiFirst: s.game.aiFirst,
-    timeLimit: s.game.timeLimit,
     forbiddenEnabled: s.game.forbiddenEnabled,
     showMoveNumbers: s.game.showMoveNumbers,
     soundEnabled: s.game.soundEnabled,
@@ -22,38 +21,25 @@ function SettingsPanel() {
     engineBundled: s.game.engine.bundled,
     engineBinary: s.game.engine.binary,
     status: s.game.status,
+    editing: s.game.editing,
   }), shallowEqual);
-  const canChangeAiFirst = data.status === STATUS.IDLE;
+  const canChangeAiFirst = data.status === STATUS.IDLE && !data.editing;
 
   return (
-    <div className="panel-card" style={{ flex: 1, minHeight: 0 }}>
-      <div className="panel-card-title">设置</div>
+    <div className={embedded ? 'settings-embedded' : 'panel-card'} style={embedded ? undefined : { flex: 1, minHeight: 0 }}>
+      {!embedded && <div className="panel-card-title">设置</div>}
       <div className="settings-list">
-        <div className="setting-row" title={canChangeAiFirst ? '' : '对局进行中，请在未开始时切换'}>
+        <div className="setting-row" title={canChangeAiFirst ? '' : '对局进行中或摆棋编辑中，请在未开始时切换'}>
           <span>AI 先手</span>
           <Switch checked={data.aiFirst} onChange={v => dispatch(setAiFirst(v))} disabled={!canChangeAiFirst} />
         </div>
-        <div className="setting-row">
-          <span>每步限时</span>
-          <Select
-            value={String(data.timeLimit)}
-            onChange={v => dispatch(setTimeLimit(v))}
-            options={[
-              { value: '1000', label: '1秒' },
-              { value: '3000', label: '3秒' },
-              { value: '5000', label: '5秒' },
-              { value: '10000', label: '10秒' },
-              { value: '30000', label: '30秒' },
-            ]}
-          />
-        </div>
-        <div className="setting-row">
+        <div className="setting-row" title={data.editing ? '摆棋编辑中不可改' : ''}>
           <span>禁手规则</span>
-          <Switch checked={data.forbiddenEnabled} onChange={v => dispatch(setForbidden(v))} />
+          <Switch checked={data.forbiddenEnabled} onChange={v => dispatch(setForbidden(v))} disabled={data.editing} />
         </div>
         <div className="setting-row">
           <span>显示步数</span>
-          <Switch checked={data.showMoveNumbers} onChange={v => dispatch(setShowMoveNumbers(v))} />
+          <Switch checked={data.showMoveNumbers} onChange={v => dispatch(setShowMoveNumbers(v))} disabled={data.editing} />
         </div>
         <div className="setting-row">
           <span>音效</span>
@@ -61,7 +47,7 @@ function SettingsPanel() {
         </div>
         <div className="setting-row">
           <span>AI 提示</span>
-          <Switch checked={data.showHint} onChange={v => dispatch(setShowHint(v))} />
+          <Switch checked={data.showHint} onChange={v => dispatch(setShowHint(v))} disabled={data.editing} />
         </div>
         <div className="setting-row">
           <span>主题</span>
@@ -69,13 +55,13 @@ function SettingsPanel() {
             value={data.theme}
             onChange={v => dispatch(setTheme(v))}
             options={[
-              { value: 'light', label: '明亮' },
-              { value: 'dark', label: '深色' },
-              { value: 'wood', label: '木纹' },
+              { value: 'light', label: '简约浅色' },
+              { value: 'dark', label: '简约深色' },
+              { value: 'wood', label: '暖木' },
             ]}
           />
         </div>
-        <div className="setting-row" style={{ color: '#888', fontSize: 12 }} title="每步独立限时，全局包时不启用">
+        <div className="setting-row" style={{ color: '#888', fontSize: 12 }}>
           <span>引擎</span>
           <span style={{ fontWeight: 500 }}>{engineKindLabel(data.engineKind)}</span>
         </div>

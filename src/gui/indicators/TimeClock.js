@@ -70,7 +70,7 @@ export function useCountdowns() {
 // ---- TimeClock：单纯展示。isActive 控制是否闪烁/上色；isIdle 显示"未开始" ----
 export const TimeClock = memo(function TimeClock({ timeMs, isActive, isIdle }) {
   if (isIdle) {
-    return <div className="player-time" style={{ color: '#bbb' }}>未开始</div>;
+    return <div className="player-time idle">--:--</div>;
   }
   const cls =
     timeMs <= 10_000 ? 'player-time danger'

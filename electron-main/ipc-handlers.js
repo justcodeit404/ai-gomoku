@@ -1,5 +1,5 @@
 // 注册 IPC 通道：渲染进程 ↔ 主进程 ↔ Rapfi 引擎
-const { ipcMain, dialog, app } = require('electron');
+const { ipcMain, dialog, app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { RapfiBridge } = require('./rapfi-bridge');
@@ -19,7 +19,7 @@ function wrap(fn) {
   };
 }
 
-function registerEngineIpc(getMainWindow) {
+function registerEngineIpc() {
   let bridge = null;
 
   function getHistoryPath() {
@@ -42,6 +42,14 @@ function registerEngineIpc(getMainWindow) {
     await fs.promises.writeFile(p, JSON.stringify(records, null, 2), 'utf8');
   }
 
+  function broadcastEval(payload) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      try {
+        if (!win.isDestroyed()) win.webContents.send('engine:eval', payload);
+      } catch (_) { /* ignore */ }
+    }
+  }
+
   async function ensureBridge() {
     if (bridge?.ready()) return bridge;
     if (bridge) {
@@ -56,21 +64,9 @@ function registerEngineIpc(getMainWindow) {
     }
     bridge = new RapfiBridge({
       binaryPath,
-      onCrash: (err) => {
-        log.warn('crash:', err.message);
-        sendEvent('crash', { message: err.message });
-      },
-      onForbidden: (payload) => sendEvent('forbid', payload),
-      onMessage: (payload) => sendEvent('message', payload),
+      onEval: (payload) => broadcastEval(payload),
     });
     return bridge;
-  }
-
-  function sendEvent(kind, payload) {
-    const win = getMainWindow();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('engine:event', { kind, ...(payload || {}) });
-    }
   }
 
   ipcMain.handle('engine:probe', wrap(async () => {
@@ -88,11 +84,6 @@ function registerEngineIpc(getMainWindow) {
     return { kind: b.engineKind(), firstMove: result?.firstMove || null };
   }));
 
-  ipcMain.handle('engine:begin', wrap(async () => {
-    const b = await ensureBridge();
-    return b.begin();
-  }));
-
   ipcMain.handle('engine:move', wrap(async (_e, { x, y, history } = {}) => {
     const b = await ensureBridge();
     const move = await b.move(x, y, history);
@@ -105,18 +96,7 @@ function registerEngineIpc(getMainWindow) {
     return { popped };
   }));
 
-  ipcMain.handle('engine:stop', wrap(async () => {
-    const b = await ensureBridge();
-    return b.forceStop();
-  }));
-
-  ipcMain.handle('engine:forbid', wrap(async () => {
-    const b = await ensureBridge();
-    const points = await b.showForbid();
-    return { points };
-  }));
-
-  ipcMain.handle('engine:hint', wrap(async (_e, { opts, history } = {}) => {
+  ipcMain.handle('engine:hint', wrap(async (_e, { opts, history, selfRole } = {}) => {
     const binaryPath = resolveRapfiBinary();
     if (!binaryPath) {
       throw new Error('Rapfi engine binary not found (looked in release/rapfi/)');
@@ -124,11 +104,27 @@ function registerEngineIpc(getMainWindow) {
     const b = new RapfiBridge({ binaryPath });
     try {
       await b.start(opts || {});
-      const move = await b.hint(history || []);
+      // selfRole: 要提示的一方绝对色(1黑/2白);默认跟 aiFirst
+      const side = selfRole === 1 || selfRole === 2
+        ? selfRole
+        : (opts?.aiFirst ? 1 : 2);
+      const move = await b.hint(history || [], side);
       return { move };
     } finally {
       await b.end().catch(() => {});
     }
+  }));
+
+  ipcMain.handle('engine:setupBoard', wrap(async (_e, { history, nextPlayer } = {}) => {
+    const b = await ensureBridge();
+    const result = await b.setupBoard(history || [], nextPlayer || 1);
+    return result;
+  }));
+
+  // "AI 接手":BOARD 相对色装入后立即应手(AI 执白)
+  ipcMain.handle('engine:triggerAiMoveAfterSetup', wrap(async () => {
+    const b = await ensureBridge();
+    return await b.triggerAiMoveAfterSetup();
   }));
 
   ipcMain.handle('history:list', wrap(async () => {
@@ -153,14 +149,18 @@ function registerEngineIpc(getMainWindow) {
   }));
 
   ipcMain.handle('dialog:saveRecord', wrap(async (_e, { content, defaultName } = {}) => {
-    const win = getMainWindow();
-    const result = await dialog.showSaveDialog(win, {
+    // 挂到主窗,避免 Windows 上无 parent 对话框沉到后面
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0] || undefined;
+    const opts = {
       defaultPath: defaultName || '棋谱.json',
       filters: [
         { name: 'JSON 棋谱', extensions: ['json'] },
         { name: '所有文件', extensions: ['*'] },
       ],
-    });
+    };
+    const result = win
+      ? await dialog.showSaveDialog(win, opts)
+      : await dialog.showSaveDialog(opts);
     if (result.canceled || !result.filePath) {
       return { canceled: true };
     }

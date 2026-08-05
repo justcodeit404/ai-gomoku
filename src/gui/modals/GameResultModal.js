@@ -5,6 +5,7 @@ import { startGame, closeResultModal } from '../../store/gameSlice';
 import { DEFAULT_DEPTH } from '../../config';
 import { formatMs } from '../indicators/TimeClock';
 import { formatGameRecord, buildGameRecord } from '../../game';
+import { saveGameRecord } from '../../persistence/recordStorage';
 
 function GameResultModal() {
   const dispatch = useDispatch();
@@ -37,14 +38,9 @@ function GameResultModal() {
     });
   }, [data]);
 
-  const onSaveRecord = useCallback(async () => {
+  const onSaveRecord = useCallback(() => {
     if (!data?.history) return;
-    const appAPI = (typeof window !== 'undefined' && window.appAPI) || null;
-    if (!appAPI) {
-      message.error('保存接口不可用', 2);
-      return;
-    }
-    const record = buildGameRecord({
+    saveGameRecord({
       size: data.size,
       aiFirst: data.aiFirst,
       forbiddenEnabled: data.forbiddenEnabled,
@@ -53,14 +49,6 @@ function GameResultModal() {
       blackTimeMs: data.blackTimeMs,
       whiteTimeMs: data.whiteTimeMs,
     });
-    const defaultName = `棋谱-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
-    try {
-      const result = await appAPI.saveRecord(JSON.stringify(record, null, 2), defaultName);
-      if (result?.canceled) return;
-      message.success('棋谱已保存', 2);
-    } catch (e) {
-      message.error(`保存失败：${e.message}`, 2);
-    }
   }, [data]);
 
   useEffect(() => {
@@ -101,12 +89,14 @@ function GameResultModal() {
   return (
     <div className="result-overlay" onClick={(e) => e.stopPropagation()}>
       <div className="result-card">
-        <div className="result-emoji">{playerWon ? '🏆' : '🤔'}</div>
+        <div className={`result-mark ${playerWon ? 'win' : 'lose'}`}>
+          <span className="result-mark-text">{playerWon ? '胜' : '负'}</span>
+        </div>
         <div className="result-title">
-          {playerWon ? '🎉 你赢了！' : (data.winner === 1 ? '黑方胜' : '白方胜')}
+          {playerWon ? '你赢了' : (data.winner === 1 ? '黑方胜' : '白方胜')}
         </div>
         <div className="result-subtitle">
-          {playerWon ? '漂亮的棋局，再来一局？' : '胜败乃兵家常事，再接再厉'}
+          {playerWon ? '漂亮的棋局，再来一局？' : '胜败常事，再来一局？'}
         </div>
 
         <div className="result-stats">
